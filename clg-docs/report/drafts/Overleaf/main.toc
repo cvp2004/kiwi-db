@@ -1,0 +1,97 @@
+\contentsline {chapter}{\numberline {1}Introduction}{1}{chapter.1}%
+\contentsline {section}{\numberline {1.1}Overview}{2}{section.1.1}%
+\contentsline {section}{\numberline {1.2}Motivation}{2}{section.1.2}%
+\contentsline {section}{\numberline {1.3}Problem Definition and Objectives}{3}{section.1.3}%
+\contentsline {section}{\numberline {1.4}Project Scope and Limitations}{3}{section.1.4}%
+\contentsline {section}{\numberline {1.5}Methodologies of Problem Solving}{4}{section.1.5}%
+\contentsline {chapter}{\numberline {2}Literature Survey}{5}{chapter.2}%
+\contentsline {chapter}{\numberline {3}Software Requirements Specification}{8}{chapter.3}%
+\contentsline {section}{\numberline {3.1}Assumptions and Dependencies}{9}{section.3.1}%
+\contentsline {section}{\numberline {3.2}Functional Requirements}{9}{section.3.2}%
+\contentsline {subsection}{\numberline {3.2.1}FR-1: Async Put Operation}{9}{subsection.3.2.1}%
+\contentsline {subsection}{\numberline {3.2.2}FR-2: Async Get Operation}{9}{subsection.3.2.2}%
+\contentsline {subsection}{\numberline {3.2.3}FR-3: Async Delete Operation}{10}{subsection.3.2.3}%
+\contentsline {subsection}{\numberline {3.2.4}FR-4: Flush Operation}{10}{subsection.3.2.4}%
+\contentsline {subsection}{\numberline {3.2.5}FR-5: Crash Recovery}{10}{subsection.3.2.5}%
+\contentsline {subsection}{\numberline {3.2.6}FR-6: Background Compaction}{10}{subsection.3.2.6}%
+\contentsline {subsection}{\numberline {3.2.7}FR-7: Web Dashboard}{10}{subsection.3.2.7}%
+\contentsline {subsection}{\numberline {3.2.8}FR-8: REPL Interface}{10}{subsection.3.2.8}%
+\contentsline {subsection}{\numberline {3.2.9}FR-9: Runtime Configuration}{10}{subsection.3.2.9}%
+\contentsline {subsection}{\numberline {3.2.10}FR-10: Live Log Streaming}{11}{subsection.3.2.10}%
+\contentsline {section}{\numberline {3.3}External Interface Requirements}{11}{section.3.3}%
+\contentsline {subsection}{\numberline {3.3.1}User Interfaces}{11}{subsection.3.3.1}%
+\contentsline {subsection}{\numberline {3.3.2}Hardware Interfaces}{11}{subsection.3.3.2}%
+\contentsline {subsection}{\numberline {3.3.3}Software Interfaces}{11}{subsection.3.3.3}%
+\contentsline {subsection}{\numberline {3.3.4}Communication Interfaces}{11}{subsection.3.3.4}%
+\contentsline {section}{\numberline {3.4}Nonfunctional Requirements}{11}{section.3.4}%
+\contentsline {subsection}{\numberline {3.4.1}Performance Requirements}{11}{subsection.3.4.1}%
+\contentsline {subsection}{\numberline {3.4.2}Safety Requirements}{12}{subsection.3.4.2}%
+\contentsline {subsection}{\numberline {3.4.3}Security Requirements}{12}{subsection.3.4.3}%
+\contentsline {subsection}{\numberline {3.4.4}Software Quality Attributes}{12}{subsection.3.4.4}%
+\contentsline {section}{\numberline {3.5}System Requirements}{12}{section.3.5}%
+\contentsline {subsection}{\numberline {3.5.1}Database Requirements}{12}{subsection.3.5.1}%
+\contentsline {subsection}{\numberline {3.5.2}Software Requirements}{12}{subsection.3.5.2}%
+\contentsline {subsection}{\numberline {3.5.3}Hardware Requirements}{13}{subsection.3.5.3}%
+\contentsline {section}{\numberline {3.6}Analysis Models: SDLC Model}{13}{section.3.6}%
+\contentsline {chapter}{\numberline {4}System Design}{14}{chapter.4}%
+\contentsline {section}{\numberline {4.1}System Architecture}{15}{section.4.1}%
+\contentsline {subsection}{\numberline {4.1.1}System Overview}{15}{subsection.4.1.1}%
+\contentsline {section}{\numberline {4.2}Mathematical Model}{17}{section.4.2}%
+\contentsline {subsection}{\numberline {4.2.1}State Space Formulation}{17}{subsection.4.2.1}%
+\contentsline {subsection}{\numberline {4.2.2}Bloom Filter Sizing}{17}{subsection.4.2.2}%
+\contentsline {subsection}{\numberline {4.2.3}Write Amplification Analysis}{17}{subsection.4.2.3}%
+\contentsline {subsection}{\numberline {4.2.4}Skip List Complexity}{18}{subsection.4.2.4}%
+\contentsline {subsection}{\numberline {4.2.5}K-Way Merge Complexity}{18}{subsection.4.2.5}%
+\contentsline {section}{\numberline {4.3}Data Flow Diagrams}{18}{section.4.3}%
+\contentsline {subsection}{\numberline {4.3.1}DFD Level 0 --- Context Diagram}{18}{subsection.4.3.1}%
+\contentsline {subsection}{\numberline {4.3.2}DFD Level 1}{18}{subsection.4.3.2}%
+\contentsline {subsection}{\numberline {4.3.3}DFD Level 2 --- Write Path}{19}{subsection.4.3.3}%
+\contentsline {subsection}{\numberline {4.3.4}DFD Level 2 --- Read Path}{19}{subsection.4.3.4}%
+\contentsline {section}{\numberline {4.4}Use Case Diagram}{19}{section.4.4}%
+\contentsline {section}{\numberline {4.5}UML Diagrams}{20}{section.4.5}%
+\contentsline {subsection}{\numberline {4.5.1}Activity Diagram --- Write Path}{20}{subsection.4.5.1}%
+\contentsline {subsection}{\numberline {4.5.2}Activity Diagram --- Read Path}{20}{subsection.4.5.2}%
+\contentsline {subsection}{\numberline {4.5.3}Sequence Diagram}{21}{subsection.4.5.3}%
+\contentsline {subsection}{\numberline {4.5.4}Class Diagram}{21}{subsection.4.5.4}%
+\contentsline {subsection}{\numberline {4.5.5}Component Diagram}{22}{subsection.4.5.5}%
+\contentsline {chapter}{\numberline {5}Project Plan}{23}{chapter.5}%
+\contentsline {section}{\numberline {5.1}Project Estimate}{24}{section.5.1}%
+\contentsline {subsection}{\numberline {5.1.1}Reconciled Estimates}{24}{subsection.5.1.1}%
+\contentsline {subsection}{\numberline {5.1.2}Project Resources}{24}{subsection.5.1.2}%
+\contentsline {section}{\numberline {5.2}Risk Management}{24}{section.5.2}%
+\contentsline {subsection}{\numberline {5.2.1}Risk Identification}{24}{subsection.5.2.1}%
+\contentsline {subsection}{\numberline {5.2.2}Risk Analysis}{24}{subsection.5.2.2}%
+\contentsline {subsection}{\numberline {5.2.3}Overview of Risk Mitigation, Monitoring, Management}{25}{subsection.5.2.3}%
+\contentsline {section}{\numberline {5.3}Project Schedule}{25}{section.5.3}%
+\contentsline {subsection}{\numberline {5.3.1}Project Task Set}{25}{subsection.5.3.1}%
+\contentsline {subsection}{\numberline {5.3.2}Task Network}{26}{subsection.5.3.2}%
+\contentsline {subsection}{\numberline {5.3.3}Timeline Chart}{26}{subsection.5.3.3}%
+\contentsline {section}{\numberline {5.4}Team Organization}{26}{section.5.4}%
+\contentsline {subsection}{\numberline {5.4.1}Team Structure}{26}{subsection.5.4.1}%
+\contentsline {subsection}{\numberline {5.4.2}Management Reporting and Communication}{26}{subsection.5.4.2}%
+\contentsline {chapter}{\numberline {6}Project Implementation}{27}{chapter.6}%
+\contentsline {section}{\numberline {6.1}Overview of Project Modules}{28}{section.6.1}%
+\contentsline {section}{\numberline {6.2}Tools and Technologies Used}{29}{section.6.2}%
+\contentsline {section}{\numberline {6.3}Algorithm Details}{30}{section.6.3}%
+\contentsline {subsection}{\numberline {6.3.1}Algorithm 1: Concurrent Skip List Insert}{30}{subsection.6.3.1}%
+\contentsline {subsection}{\numberline {6.3.2}Algorithm 2: K-Way Merge for Compaction}{31}{subsection.6.3.2}%
+\contentsline {subsection}{\numberline {6.3.3}Algorithm 3: WAL Recovery}{31}{subsection.6.3.3}%
+\contentsline {subsection}{\numberline {6.3.4}Algorithm 4: Parallel Flush with Event-Chain Commits}{32}{subsection.6.3.4}%
+\contentsline {subsection}{\numberline {6.3.5}Algorithm 5: Bloom Filter with Data-Derived Sizing}{32}{subsection.6.3.5}%
+\contentsline {chapter}{\numberline {7}Software Testing}{33}{chapter.7}%
+\contentsline {section}{\numberline {7.1}Type of Testing}{34}{section.7.1}%
+\contentsline {section}{\numberline {7.2}Test Cases and Test Results}{34}{section.7.2}%
+\contentsline {chapter}{\numberline {8}Results}{35}{chapter.8}%
+\contentsline {section}{\numberline {8.1}Outcomes}{36}{section.8.1}%
+\contentsline {section}{\numberline {8.2}Project Documentation Website}{36}{section.8.2}%
+\contentsline {section}{\numberline {8.3}Screenshots}{37}{section.8.3}%
+\contentsline {chapter}{\numberline {9}Conclusions}{42}{chapter.9}%
+\contentsline {section}{\numberline {9.1}Conclusions}{43}{section.9.1}%
+\contentsline {section}{\numberline {9.2}Future Work}{43}{section.9.2}%
+\contentsline {section}{\numberline {9.3}Applications}{44}{section.9.3}%
+\contentsline {chapter}{\numberline {10}Appendix}{45}{chapter.10}%
+\contentsline {section}{\numberline {10.1}Appendix A: Feasibility Assessment}{46}{section.10.1}%
+\contentsline {section}{\numberline {10.2}Appendix B: Paper Publication}{46}{section.10.2}%
+\contentsline {section}{\numberline {10.3}Appendix C: Plagiarism Report}{46}{section.10.3}%
+\contentsline {chapter}{\numberline {11}References}{47}{chapter.11}%
+\contentsfinish 

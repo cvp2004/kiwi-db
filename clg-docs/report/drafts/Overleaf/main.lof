@@ -1,0 +1,37 @@
+\addvspace {10\p@ }
+\addvspace {10\p@ }
+\addvspace {10\p@ }
+\addvspace {10\p@ }
+\contentsline {figure}{\numberline {4.1}{\ignorespaces KiwiDB System Architecture.}}{15}{figure.caption.5}%
+\contentsline {figure}{\numberline {4.2}{\ignorespaces KiwiDB layered dependency model.}}{16}{figure.caption.6}%
+\contentsline {figure}{\numberline {4.3}{\ignorespaces DFD Level 0 --- Context Diagram.}}{18}{figure.caption.9}%
+\contentsline {figure}{\numberline {4.4}{\ignorespaces DFD Level 1 --- Major subsystems and data stores.}}{18}{figure.caption.10}%
+\contentsline {figure}{\numberline {4.5}{\ignorespaces DFD Level 2 --- Write path detail.}}{19}{figure.caption.11}%
+\contentsline {figure}{\numberline {4.6}{\ignorespaces DFD Level 2 --- Read path detail.}}{19}{figure.caption.12}%
+\contentsline {figure}{\numberline {4.7}{\ignorespaces Use Case Diagram for KiwiDB.}}{19}{figure.caption.13}%
+\contentsline {figure}{\numberline {4.8}{\ignorespaces Activity Diagram --- Write Path.}}{20}{figure.caption.14}%
+\contentsline {figure}{\numberline {4.9}{\ignorespaces Activity Diagram --- Read Path.}}{20}{figure.caption.15}%
+\contentsline {figure}{\numberline {4.10}{\ignorespaces Sequence Diagram --- Put, Get, and Flush operations.}}{21}{figure.caption.16}%
+\contentsline {figure}{\numberline {4.11}{\ignorespaces Class Diagram --- Core class hierarchy.}}{21}{figure.caption.17}%
+\contentsline {figure}{\numberline {4.12}{\ignorespaces Component Diagram.}}{22}{figure.caption.18}%
+\addvspace {10\p@ }
+\contentsline {figure}{\numberline {5.1}{\ignorespaces Project timeline (Gantt chart).}}{26}{figure.caption.20}%
+\addvspace {10\p@ }
+\contentsline {figure}{\numberline {6.1}{\ignorespaces Parallel flush pipeline with event-chain ordering.}}{32}{figure.caption.23}%
+\addvspace {10\p@ }
+\addvspace {10\p@ }
+\contentsline {figure}{\numberline {8.1}{\ignorespaces QR for project documentation (\url {https://bit.ly/cvp-kiwidb}).}}{36}{figure.caption.25}%
+\contentsline {figure}{\numberline {8.2}{\ignorespaces Web Dashboard --- Home page.}}{37}{figure.caption.26}%
+\contentsline {figure}{\numberline {8.3}{\ignorespaces Terminal --- REPL Loop.}}{37}{figure.caption.27}%
+\contentsline {figure}{\numberline {8.4}{\ignorespaces Web Dashboard --- MemTable Viewer page.}}{38}{figure.caption.28}%
+\contentsline {figure}{\numberline {8.5}{\ignorespaces Web Dashboard --- SSTable Browser page.}}{38}{figure.caption.29}%
+\contentsline {figure}{\numberline {8.6}{\ignorespaces Web Dashboard --- Live Log Stream page.}}{39}{figure.caption.30}%
+\contentsline {figure}{\numberline {8.7}{\ignorespaces Web Dashboard --- Lookup-Trace page.}}{39}{figure.caption.31}%
+\contentsline {figure}{\numberline {8.8}{\ignorespaces Web Dashboard --- Configuration page.}}{40}{figure.caption.32}%
+\contentsline {figure}{\numberline {8.9}{\ignorespaces Web Dashboard --- Load-Generator.}}{40}{figure.caption.33}%
+\contentsline {figure}{\numberline {8.10}{\ignorespaces Documentation Website}}{41}{figure.caption.34}%
+\addvspace {10\p@ }
+\addvspace {10\p@ }
+\addvspace {10\p@ }
+\contentsfinish 
+\contentsfinish 
