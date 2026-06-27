@@ -92,6 +92,5 @@
 \contentsline {chapter}{\numberline {10}Appendix}{45}{chapter.10}%
 \contentsline {section}{\numberline {10.1}Appendix A: Feasibility Assessment}{46}{section.10.1}%
 \contentsline {section}{\numberline {10.2}Appendix B: Paper Publication}{46}{section.10.2}%
-\contentsline {section}{\numberline {10.3}Appendix C: Plagiarism Report}{46}{section.10.3}%
-\contentsline {chapter}{\numberline {11}References}{47}{chapter.11}%
+\contentsline {chapter}{\numberline {11}References}{48}{chapter.11}%
 \contentsfinish 

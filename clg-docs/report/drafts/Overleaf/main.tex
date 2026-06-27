@@ -104,6 +104,11 @@
 % ============================================================
 \begin{document}
 
+% Suppress page numbering on the unnumbered front matter
+% (Title, Certificate, Acknowledgement, Abstract).
+% Overridden by \pagestyle{frontmatter} once \frontmatter begins.
+\pagestyle{empty}
+
 % ============================================================
 % TITLE PAGE [P-1]
 % ============================================================
@@ -2060,11 +2065,37 @@ This greedy approach is \textbf{not optimal} in the information-theoretic sense 
 
 \section{Appendix B: Paper Publication}
 
-% The research paper titled \textbf{``KiwiDB: An Async-Native Log-Structured Merge Tree Key-Value Store with Parallel Flush and Subprocess Compaction''} has been prepared in IEEE conference format. The paper covers the system architecture, design innovations, implementation details, and comparison with LevelDB and RocksDB. The full paper is available at \texttt{clg-docs/paper/kiwidb-implementation-paper.tex} in the project repository.
+As part of the dissemination effort, four research papers --- three implementation papers and one survey paper --- have been prepared and submitted to peer-reviewed venues. At the time of writing, all submissions are under review; none have been accepted yet.
 
-\section{Appendix C: Plagiarism Report}
+\vspace{0.5em}
+\noindent\textbf{Implementation Paper (Submission~1) --- ICCUBEA.}\\
+\textbf{Title:} ``KiwiDB: An Async-Native Log-Structured Merge Tree Key-Value Store''.\\
+\textbf{Venue:} International Conference on Computing, Communication, Control and Automation (ICCUBEA), PCCOE Pune --- \url{https://iccubea.pccoepune.com/}.\\
+\textbf{Status:} Submitted; under review.\\
+\textbf{Scope:} Presents the system architecture, design innovations, and implementation details of KiwiDB, with a head-to-head comparison against LevelDB and RocksDB.
 
-\textit{The plagiarism check report from Turnitin/iThenticate should be attached here.}
+\vspace{0.5em}
+\noindent\textbf{Implementation Paper (Submission~2) --- ICIICS.}\\
+\textbf{Title:} ``KiwiDB: An Async-Native Log-Structured Merge Tree Key-Value Store''.\\
+\textbf{Venue:} International Conference on Innovations in Intelligent Computing and Sustainability (ICIICS) --- \url{https://iciics.in/}.\\
+\textbf{Status:} Submitted; under review.
+
+\vspace{0.5em}
+\noindent\textbf{Implementation Paper (Submission~3) --- IC3.}\\
+\textbf{Title:} ``KiwiDB: An Async-Native Log-Structured Merge Tree Key-Value Store''.\\
+\textbf{Venue:} International Conference on Contemporary Computing (IC3) --- \url{https://www.ic3conf.net/}.\\
+\textbf{Status:} Submitted; under review.
+
+\vspace{0.5em}
+\noindent\textbf{Survey Paper --- IJERT.}\\
+\textbf{Title:} ``Survey of LSM Trees and Indexing Techniques in Key-Value Stores''.\\
+\textbf{Venue:} International Journal of Engineering Research \& Technology (IJERT) --- \url{https://www.ijert.org/call-for-papers}.\\
+\textbf{Status:} Submitted; under review.\\
+\textbf{Scope:} Provides a structured overview of LSM-tree-based storage architectures with a focus on indexing mechanisms and optimization strategies for primary and secondary key access. Covers core components (memtables, write-ahead logs, SSTables, Bloom filters, sparse indexes), surveys representative systems (LevelDB, RocksDB, Cassandra, HBase, AsterixDB), and reviews emerging adaptations involving persistent memory, disaggregated memory systems, hybrid storage layouts, and key-value separation.
+
+% \section{Appendix C: Plagiarism Report}
+
+% \textit{The plagiarism check report from Turnitin/iThenticate should be attached here.}
 
 
 % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
