@@ -1,0 +1,64 @@
+@startuml
+title KiwiDB — Sequence: get(key)
+skinparam shadowing false
+autonumber
+
+actor Client
+participant "LSMEngine" as E
+participant "MemTableManager" as MM
+participant "SSTableManager" as SM
+participant "SSTableReader" as R
+participant "BloomFilter" as BF
+participant "SparseIndex" as SI
+participant "BlockCache" as BC
+
+Client -> E : get(key)
+activate E
+
+E -> MM : get(key)
+activate MM
+note right of MM : check active table,\nthen frozen queue\n(newest first)
+alt found in memtable
+  MM --> E : value / tombstone
+  E --> Client : value or None
+else miss
+  MM --> E : not found
+  deactivate MM
+
+  E -> SM : get(key)
+  activate SM
+  loop each SSTable, L0 newest-first then L1..L3
+    SM -> R : get(key)
+    activate R
+    R -> BF : may_contain(key)
+    activate BF
+    BF --> R : false  -> skip table
+    deactivate BF
+    note right of R : a single 0-bit = certain\nabsence, no disk access
+
+    R -> SI : floor_offset(key)
+    activate SI
+    SI --> R : block_offset
+    deactivate SI
+
+    R -> BC : get(file_id, block_offset)
+    activate BC
+    alt cache hit
+      BC --> R : block bytes
+    else miss
+      BC --> R : null
+      R -> R : mmap read block; BC.put(...)
+    end
+    deactivate BC
+
+    R -> R : scan block, keep highest-seq match
+    R --> SM : (seq, value) or none
+    deactivate R
+  end
+  SM --> E : highest-seq value across sources
+  deactivate SM
+  E --> Client : value (None if tombstone / absent)
+end
+deactivate E
+
+@enduml

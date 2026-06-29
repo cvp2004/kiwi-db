@@ -1,0 +1,44 @@
+@startuml
+title KiwiDB — State Machine: Engine lifecycle
+skinparam shadowing false
+
+[*] --> Opening : LSMEngine.open(data_root)
+
+state Opening {
+  [*] --> LoadingConfig
+  LoadingConfig --> LoadingSSTables : config ready
+  LoadingSSTables --> Recovering : readers + sst_max
+  Recovering --> Recovering : replay WAL,\ndrop already-flushed,\nrebuild memtable
+}
+
+Opening --> Running : background tasks started\n(FlushPipeline, CompactionManager)
+
+state Running {
+  [*] --> Serving
+  Serving --> Serving : put / get / delete
+  Serving --> Flushing : memtable full / flush()
+  Flushing --> Serving : snapshot flushed
+  Serving --> Compacting : threshold met
+  Compacting --> Serving : merge committed
+  --
+  [*] --> Background
+  Background --> Background : flush + compaction\nrun off the request path
+}
+note right of Running
+  Reads & writes are served while
+  flush and compaction proceed
+  concurrently in the background.
+end note
+
+Running --> Closing : close()
+
+state Closing {
+  [*] --> DrainingFlush
+  DrainingFlush --> ReleasingResources : final flush done
+  ReleasingResources --> ReleasingResources : close readers, WAL,\nlog server, caches
+}
+
+Closing --> Closed
+Closed --> [*]
+
+@enduml

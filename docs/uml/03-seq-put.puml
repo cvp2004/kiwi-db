@@ -1,0 +1,58 @@
+@startuml
+title KiwiDB — Sequence: put(key, value)
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+autonumber
+
+actor Client
+participant "LSMEngine" as E
+participant "SeqGenerator" as Seq
+participant "WALManager" as WAL
+participant "MemTableManager" as MM
+participant "ActiveMemTable\n(SkipList)" as MT
+participant "FlushPipeline" as FP
+
+Client -> E : put(key, value)
+activate E
+
+E -> Seq : next()
+activate Seq
+Seq --> E : seq
+deactivate Seq
+
+E -> WAL : append(WALEntry{key, value, seq, ts, PUT})
+activate WAL
+note right of WAL
+  Durability point:
+  framed [len][msgpack][CRC32]
+  fsynced to disk BEFORE memtable
+end note
+WAL --> E : ok
+deactivate WAL
+
+E -> MM : put(key, seq, ts, value)
+activate MM
+MM -> MT : put(key, seq, ts, value)
+activate MT
+note right of MT
+  Lock only the predecessor
+  nodes (fixed id() order);
+  set fully_linked last.
+  Reads stay lock-free.
+end note
+MT --> MM : ok
+deactivate MT
+
+MM -> MM : maybe_freeze()
+alt active table over threshold
+  MM -> MM : snapshot + new active table
+  MM -->> FP : signal (snapshot queued)
+  note right of FP : flush handled\nasynchronously
+end
+MM --> E : ok
+deactivate MM
+
+E --> Client : ack
+deactivate E
+
+@enduml

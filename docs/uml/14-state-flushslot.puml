@@ -1,0 +1,42 @@
+@startuml
+title KiwiDB — State Machine: Flush slot (event-chain ordering)
+skinparam shadowing false
+
+[*] --> Pending : slot built for a snapshot\n(position in the ordered batch)
+
+Pending --> Aborted : batch_abort already set\n(a predecessor failed)
+Pending --> Writing : acquire semaphore permit
+
+state Writing {
+  [*] --> WritingSSTable
+  WritingSSTable --> WritingSSTable : write data/index/filter/meta
+}
+note right of Writing
+  PHASE 1 — multiple slots
+  write in parallel (bounded
+  by the semaphore).
+end note
+
+Writing --> WaitingToCommit : write done\n(release permit)
+Writing --> Failed : exception during write
+
+WaitingToCommit --> WaitingToCommit : await prev_committed
+WaitingToCommit --> Aborted : batch_abort set\n(close reader, skip)
+WaitingToCommit --> Committing : prev committed & not aborted
+
+state Committing {
+  [*] --> Registering
+  Registering --> Registering : commit to SSTableManager,\npop snapshot, truncate WAL,\ntrigger compaction check
+}
+note right of Committing
+  PHASE 2 — commits run
+  strictly in slot order.
+end note
+
+Committing --> Committed : set my_committed\n(pass baton to next slot)
+
+Failed --> Aborted : set batch_abort\n(signal downstream)
+Aborted --> [*] : ALWAYS set my_committed\n(prevents chain deadlock)
+Committed --> [*]
+
+@enduml

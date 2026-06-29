@@ -1,0 +1,95 @@
+@startuml
+title KiwiDB — High-Level Class Diagram
+skinparam shadowing false
+skinparam linetype ortho
+skinparam classFontStyle bold
+hide empty members
+hide circle
+
+' One class per major responsibility. Detail lives in 02-class.puml.
+
+abstract class StorageEngine <<contract>> {
+  +put(); +get(); +delete(); +close()
+}
+
+class LSMEngine <<facade>> {
+  +open(); +put(); +get()
+  +delete(); +flush(); +close()
+}
+
+together {
+  class WALManager <<durability>> {
+    +append(); +replay(); +truncate()
+  }
+  class MemTableManager <<in-memory>> {
+    +put(); +get(); +maybe_freeze()
+  }
+  class SSTableManager <<on-disk>> {
+    +flush(); +get(); +commit()
+  }
+}
+
+class FlushPipeline <<background>> {
+  +run()  ' parallel write, ordered commit
+}
+class CompactionManager <<background>> {
+  +check_and_compact()  ' merges in a subprocess
+}
+class SeqGenerator <<versioning>> {
+  +next()
+}
+class LSMConfig <<settings>> {
+  +load(); +update()
+}
+
+class SkipList <<concurrent>> {
+  +put(); +get(); +delete()
+}
+
+together {
+  class BloomFilter <<read filter>> {
+    +may_contain()
+  }
+  class SparseIndex <<locator>> {
+    +floor_offset()
+  }
+  class BlockCache <<LRU x3>> {
+    +get(); +put()
+  }
+}
+
+class KWayMergeIterator <<merge>> {
+  +__next__()  ' dedup + tombstone GC
+}
+
+' ---- relationships ----
+StorageEngine <|.. LSMEngine
+
+LSMEngine *-- WALManager
+LSMEngine *-- MemTableManager
+LSMEngine *-- SSTableManager
+LSMEngine *-- FlushPipeline
+LSMEngine *-- CompactionManager
+LSMEngine *-- SeqGenerator
+LSMEngine *-- LSMConfig
+
+MemTableManager *-- SkipList
+
+SSTableManager *-- BloomFilter
+SSTableManager *-- SparseIndex
+SSTableManager *-- BlockCache
+
+FlushPipeline ..> MemTableManager : drains
+FlushPipeline ..> SSTableManager : writes L0
+FlushPipeline ..> WALManager : truncates
+CompactionManager ..> SSTableManager : rewrites levels
+CompactionManager ..> KWayMergeIterator : uses
+
+note bottom of LSMEngine
+  Facade over six subsystems.
+  Write: WAL then MemTable.
+  Read: MemTable then SSTable levels.
+  Flush + compaction run in the background.
+end note
+
+@enduml

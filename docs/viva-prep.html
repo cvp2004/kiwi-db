@@ -1,0 +1,1752 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KiwiDB — Viva Field Guide</title>
+<meta name="description" content="An end-to-end study guide to KiwiDB, an LSM-tree key-value store. Built for a viva: data structures, operation flows, parallelism, B+ tree vs LSM, and an examiner Q&A bank.">
+<style>
+/* ============================================================
+   KiwiDB Field Guide — design system
+   Palette: a "kiwi" engineering field-guide.
+   Semantic colours are consistent across every diagram:
+     kiwi green = data live in MEMORY
+     slate blue = data at rest ON DISK
+     clay red   = a DELETE / tombstone
+     amber      = work IN FLIGHT
+   ============================================================ */
+:root{
+  --ground:#F4F6EE;
+  --paper:#FCFEF8;
+  --surface:#FFFFFF;
+  --ink:#16201A;
+  --ink-soft:#48564C;
+  --ink-faint:#7C8A7E;
+  --line:#DBE3D1;
+  --line-strong:#C3CFB6;
+
+  --kiwi:#3C7B2C;          /* brand + "in memory" */
+  --kiwi-deep:#2C5D20;
+  --kiwi-bright:#6FB23F;
+  --kiwi-wash:#E8F1DE;
+  --seed:#1C2A14;
+
+  --disk:#2C5E8C;          /* on disk */
+  --disk-wash:#E1ECF4;
+  --tomb:#AE3F3C;          /* delete / tombstone */
+  --tomb-wash:#F6E2E1;
+  --flight:#C2811B;        /* in flight */
+  --flight-wash:#F6EBD4;
+
+  --shadow:0 1px 2px rgba(22,32,26,.05), 0 6px 22px rgba(22,32,26,.06);
+  --shadow-lift:0 2px 6px rgba(22,32,26,.08), 0 18px 40px rgba(22,32,26,.10);
+  --radius:10px;
+  --radius-sm:6px;
+
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,"Times New Roman",serif;
+  --sans:"Seravek","Avenir Next",Avenir,"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,"Liberation Mono",monospace;
+
+  --maxprose:70ch;
+  --maxwide:1060px;
+  --sidebar:288px;
+}
+
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{
+  margin:0;
+  background:var(--ground);
+  color:var(--ink);
+  font-family:var(--sans);
+  font-size:17px;
+  line-height:1.66;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
+::selection{background:var(--kiwi-bright);color:#0d160a}
+
+/* ---- reading-progress bar ---- */
+.progress{position:fixed;top:0;left:0;right:0;height:3px;z-index:60;background:transparent}
+.progress__fill{height:100%;width:0;background:linear-gradient(90deg,var(--kiwi),var(--kiwi-bright));transition:width .12s linear}
+
+/* ---- layout ---- */
+.layout{display:flex;align-items:flex-start;gap:0}
+.sidebar{
+  width:var(--sidebar);flex:none;position:sticky;top:0;height:100vh;
+  overflow:auto;padding:26px 18px 40px 26px;
+  border-right:1px solid var(--line);background:var(--paper);
+}
+.content{flex:1;min-width:0}
+.container{max-width:var(--maxwide);margin:0 auto;padding:0 28px 120px}
+
+/* ---- sidebar brand + nav ---- */
+.brand{display:flex;align-items:center;gap:11px;margin-bottom:6px;text-decoration:none;color:inherit}
+.brand__mark{flex:none}
+.brand__name{font-family:var(--serif);font-size:1.32rem;font-weight:600;letter-spacing:.01em;line-height:1.05}
+.brand__sub{font-size:.72rem;color:var(--ink-faint);letter-spacing:.16em;text-transform:uppercase;margin-top:2px}
+.toc{margin-top:22px}
+.toc__group{font-size:.7rem;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-faint);margin:18px 0 7px;font-weight:600}
+.toc a{
+  display:flex;gap:9px;align-items:baseline;text-decoration:none;color:var(--ink-soft);
+  font-size:.9rem;line-height:1.3;padding:5px 9px;border-radius:var(--radius-sm);margin:1px 0;
+  border-left:2px solid transparent;transition:background .15s,color .15s,border-color .15s;
+}
+.toc a:hover{background:var(--kiwi-wash);color:var(--ink)}
+.toc a.active{background:var(--kiwi-wash);color:var(--kiwi-deep);border-left-color:var(--kiwi);font-weight:600}
+.toc a .n{font-family:var(--mono);font-size:.74rem;color:var(--ink-faint);min-width:1.4em;font-variant-numeric:tabular-nums}
+.toc a.active .n{color:var(--kiwi)}
+
+/* ---- hero ---- */
+.hero{padding:72px 0 30px;border-bottom:1px solid var(--line)}
+.eyebrow{font-size:.74rem;letter-spacing:.2em;text-transform:uppercase;color:var(--kiwi-deep);font-weight:700}
+.hero h1{
+  font-family:var(--serif);font-weight:600;font-size:clamp(2.3rem,5vw,3.7rem);line-height:1.04;
+  margin:.32em 0 .12em;letter-spacing:-.012em;text-wrap:balance;max-width:16ch;
+}
+.hero .lede{font-size:1.18rem;color:var(--ink-soft);max-width:62ch;margin:.4em 0 0;text-wrap:pretty}
+.hero__meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:26px}
+
+/* ---- generic prose typography ---- */
+section.sec{padding:56px 0 8px;scroll-margin-top:18px}
+.sec > *{max-width:var(--maxprose)}
+.sec > .plate,.sec > .wide,.sec > .grid2,.sec > .tablewrap,.sec > .qbank{max-width:var(--maxwide)}
+.sec-head{max-width:var(--maxwide);margin-bottom:6px}
+.sec-num{font-family:var(--mono);font-size:.8rem;color:var(--kiwi);letter-spacing:.08em;font-variant-numeric:tabular-nums}
+h2{font-family:var(--serif);font-weight:600;font-size:clamp(1.7rem,3.3vw,2.4rem);line-height:1.1;letter-spacing:-.01em;margin:.1em 0 .25em;text-wrap:balance}
+h3{font-family:var(--serif);font-weight:600;font-size:1.42rem;line-height:1.2;margin:1.9em 0 .35em;color:var(--ink)}
+h4{font-size:.82rem;letter-spacing:.12em;text-transform:uppercase;color:var(--kiwi-deep);margin:1.6em 0 .4em;font-weight:700}
+p{margin:.7em 0}
+.sec a{color:var(--kiwi-deep);text-decoration:underline;text-decoration-color:var(--line-strong);text-underline-offset:2px}
+strong{font-weight:660;color:var(--ink)}
+em{color:var(--ink)}
+ul,ol{margin:.6em 0;padding-left:1.3em}
+li{margin:.34em 0}
+li::marker{color:var(--kiwi)}
+hr{border:0;border-top:1px solid var(--line);margin:40px 0;max-width:var(--maxwide)}
+abbr{cursor:help;text-decoration:underline dotted var(--line-strong);text-underline-offset:2px}
+
+/* inline code + code blocks */
+code{font-family:var(--mono);font-size:.86em;background:var(--kiwi-wash);color:var(--kiwi-deep);padding:.08em .36em;border-radius:4px}
+pre{
+  font-family:var(--mono);font-size:.83rem;line-height:1.55;background:#13201a;color:#d6e7cf;
+  padding:16px 18px;border-radius:var(--radius);overflow-x:auto;margin:1em 0;border:1px solid #20342a;
+}
+pre code{background:none;color:inherit;padding:0;font-size:inherit}
+pre .c{color:#7fa088;font-style:italic}      /* comment */
+pre .k{color:#9ed27c}                          /* keyword */
+pre .s{color:#e7c98b}                          /* string  */
+pre .hl{color:#fff;background:#2c5d20;padding:0 2px;border-radius:3px}
+
+/* ---- chips / pills / badges ---- */
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:.78rem;font-weight:600;
+  padding:4px 11px;border-radius:999px;background:var(--surface);border:1px solid var(--line-strong);color:var(--ink-soft)}
+.chip .dot{width:8px;height:8px;border-radius:50%}
+.chip--mem{background:var(--kiwi-wash);border-color:#bcd6a8;color:var(--kiwi-deep)}
+.chip--disk{background:var(--disk-wash);border-color:#b9d0e4;color:var(--disk)}
+.chip--tomb{background:var(--tomb-wash);border-color:#e6bcba;color:var(--tomb)}
+.chip--flight{background:var(--flight-wash);border-color:#e6d2a3;color:#9a6711}
+
+/* ---- callout asides ---- */
+.callout{border-radius:var(--radius);padding:15px 18px 15px 16px;margin:1.3em 0;border:1px solid var(--line);
+  background:var(--surface);box-shadow:var(--shadow);border-left:4px solid var(--ink-faint)}
+.callout__label{font-size:.72rem;letter-spacing:.13em;text-transform:uppercase;font-weight:700;margin-bottom:3px;display:flex;align-items:center;gap:7px}
+.callout p:first-of-type{margin-top:0}.callout p:last-child{margin-bottom:0}
+.callout--plain{border-left-color:var(--kiwi)}            .callout--plain .callout__label{color:var(--kiwi-deep)}
+.callout--why{border-left-color:var(--disk);background:var(--disk-wash)}   .callout--why .callout__label{color:var(--disk)}
+.callout--exam{border-left-color:var(--flight);background:var(--flight-wash)} .callout--exam .callout__label{color:#9a6711}
+.callout--warn{border-left-color:var(--tomb);background:var(--tomb-wash)}   .callout--warn .callout__label{color:var(--tomb)}
+
+/* ---- "go deeper" expandable ---- */
+details.deeper{border:1px dashed var(--line-strong);border-radius:var(--radius);padding:0 16px;margin:1.2em 0;background:var(--paper)}
+details.deeper>summary{cursor:pointer;padding:12px 4px;font-weight:600;color:var(--kiwi-deep);font-size:.95rem;list-style:none;display:flex;align-items:center;gap:8px}
+details.deeper>summary::-webkit-details-marker{display:none}
+details.deeper>summary::before{content:"▸";color:var(--kiwi);transition:transform .2s}
+details.deeper[open]>summary::before{transform:rotate(90deg)}
+details.deeper>summary:hover{color:var(--kiwi)}
+details.deeper>div{padding:2px 2px 14px}
+
+/* ---- figure "plate" (textbook figure) ---- */
+.plate{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);
+  margin:1.7em auto;overflow:hidden}
+.plate__bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  padding:11px 16px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,var(--surface),var(--paper))}
+.plate__title{font-family:var(--serif);font-weight:600;font-size:1.02rem}
+.plate__title .fignum{font-family:var(--mono);font-size:.74rem;color:var(--kiwi);margin-right:7px;font-variant-numeric:tabular-nums}
+.plate__body{padding:18px 16px}
+.plate__body svg{display:block;width:100%;height:auto;max-width:100%}
+.plate__cap{padding:0 16px 15px;color:var(--ink-soft);font-size:.92rem;max-width:74ch}
+.plate__scroll{overflow-x:auto}
+.legend{display:flex;flex-wrap:wrap;gap:7px 14px;padding:0 16px 14px;font-size:.78rem;color:var(--ink-soft)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:11px;height:11px;border-radius:3px;display:inline-block}
+
+/* play button */
+.play{display:inline-flex;align-items:center;gap:7px;font-family:var(--sans);font-weight:600;font-size:.82rem;
+  cursor:pointer;border:1px solid var(--kiwi);background:var(--kiwi);color:#fff;padding:6px 13px;border-radius:999px;
+  transition:background .15s,transform .08s}
+.play:hover{background:var(--kiwi-deep)}
+.play:active{transform:translateY(1px)}
+.play:focus-visible{outline:3px solid var(--kiwi-bright);outline-offset:2px}
+.play .ic{font-size:.8em}
+
+/* ---- two-column grids ---- */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:1.4em auto}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:1.4em auto;max-width:var(--maxwide)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:16px 17px;box-shadow:var(--shadow)}
+.card h4{margin-top:0}
+.card--mem{border-top:3px solid var(--kiwi)} .card--disk{border-top:3px solid var(--disk)}
+.card--need{border-top:3px solid var(--kiwi-bright)}
+
+/* needs/benefits/limits tri-card */
+.nbl{display:grid;grid-template-columns:repeat(3,1fr);gap:0;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin:1.4em auto;max-width:var(--maxwide);background:var(--surface)}
+.nbl > div{padding:14px 16px}
+.nbl > div + div{border-left:1px solid var(--line)}
+.nbl h5{margin:0 0 6px;font-size:.74rem;letter-spacing:.12em;text-transform:uppercase;font-weight:700}
+.nbl .need h5{color:var(--kiwi-deep)} .nbl .benefit h5{color:var(--disk)} .nbl .limit h5{color:var(--tomb)}
+.nbl p{margin:0;font-size:.92rem;color:var(--ink-soft)}
+
+/* ---- tables ---- */
+.tablewrap{overflow-x:auto;margin:1.4em auto;border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+table{border-collapse:collapse;width:100%;font-size:.9rem;background:var(--surface);min-width:520px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+thead th{background:var(--kiwi-wash);color:var(--kiwi-deep);font-size:.74rem;letter-spacing:.07em;text-transform:uppercase;font-weight:700;position:sticky;top:0}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:nth-child(even){background:var(--paper)}
+td code{font-size:.82em}
+.num{font-variant-numeric:tabular-nums;font-family:var(--mono);font-size:.84em}
+.win{color:var(--kiwi-deep);font-weight:600}.lose{color:var(--tomb);font-weight:600}
+
+/* ---- Q&A bank ---- */
+.qbank{margin:1.2em auto}
+.qa{border:1px solid var(--line);border-radius:var(--radius);margin:9px 0;background:var(--surface);overflow:hidden}
+.qa>summary{cursor:pointer;padding:14px 16px;font-weight:600;color:var(--ink);list-style:none;display:flex;gap:11px;align-items:baseline}
+.qa>summary::-webkit-details-marker{display:none}
+.qa>summary .q{color:var(--kiwi);font-family:var(--mono);font-size:.8rem;flex:none}
+.qa>summary::after{content:"+";margin-left:auto;color:var(--ink-faint);font-size:1.3rem;line-height:1}
+.qa[open]>summary::after{content:"–"}
+.qa[open]>summary{border-bottom:1px solid var(--line);background:var(--paper)}
+.qa__a{padding:13px 16px 16px;color:var(--ink-soft);font-size:.95rem}
+.qa__a p:first-child{margin-top:0}.qa__a p:last-child{margin-bottom:0}
+.qcat{font-size:.74rem;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-faint);font-weight:700;margin:22px 0 4px}
+
+/* footer */
+.foot{border-top:1px solid var(--line);margin-top:60px;padding:30px 0 10px;color:var(--ink-faint);font-size:.86rem;max-width:var(--maxwide)}
+
+/* ============ STEPPED DIAGRAM ENGINE ============ */
+/* Each diagram is a click-through stepper. SVG elements carry data-step="k"
+   and become visible once the current step reaches k. Nothing auto-plays. */
+.plate svg text{font-family:var(--sans)}
+
+/* stepper controls (live in the plate bar) */
+.stepper{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.step-btn{font-family:var(--sans);font-weight:600;font-size:.8rem;cursor:pointer;border:1px solid var(--line-strong);
+  background:var(--surface);color:var(--ink);padding:6px 12px;border-radius:999px;
+  transition:background .15s,border-color .15s,opacity .15s,color .15s}
+.step-btn:hover:not(:disabled){background:var(--kiwi-wash);border-color:var(--kiwi);color:var(--kiwi-deep)}
+.step-btn:active:not(:disabled){transform:translateY(1px)}
+.step-btn:disabled{opacity:.38;cursor:not-allowed}
+.step-btn--primary{background:var(--kiwi);color:#fff;border-color:var(--kiwi)}
+.step-btn--primary:hover:not(:disabled){background:var(--kiwi-deep);color:#fff}
+.step-count{font-family:var(--mono);font-size:.76rem;color:var(--ink-soft);font-variant-numeric:tabular-nums;min-width:62px;text-align:center;letter-spacing:.02em}
+.step-count b{color:var(--kiwi-deep)}
+
+/* stepped svg elements: hidden until their data-step is reached */
+.plate svg [data-step]{opacity:0;transition:opacity .42s ease}
+.plate svg [data-step].show{opacity:1}
+/* arrows that "draw" themselves in when revealed */
+.plate svg .draw{stroke-dasharray:var(--len,420);stroke-dashoffset:var(--len,420);opacity:1;transition:stroke-dashoffset .55s ease}
+.plate svg .draw.show{stroke-dashoffset:0}
+/* an item that is dropped / superseded shows faded when revealed */
+.plate svg .struck.show{opacity:.3}
+
+/* the numbered step list under each diagram, synced to the current step */
+.steplist{list-style:none;margin:0;padding:15px 18px 9px;display:flex;flex-direction:column;gap:9px;border-top:1px solid var(--line)}
+.steplist li{display:flex;gap:11px;align-items:flex-start;font-size:.93rem;line-height:1.45;color:var(--ink-faint);opacity:.55;transition:opacity .2s,color .2s}
+.steplist li .sn{flex:none;width:23px;height:23px;border-radius:50%;background:var(--line);color:var(--ink-soft);
+  font-size:.74rem;font-weight:700;font-family:var(--mono);display:flex;align-items:center;justify-content:center;margin-top:1px;transition:background .2s,color .2s,box-shadow .2s}
+.steplist li.done{opacity:.9;color:var(--ink-soft)}
+.steplist li.done .sn{background:var(--kiwi-wash);color:var(--kiwi-deep)}
+.steplist li.active{opacity:1;color:var(--ink);font-weight:500}
+.steplist li.active .sn{background:var(--kiwi);color:#fff;box-shadow:0 0 0 4px var(--kiwi-wash)}
+
+@media (prefers-reduced-motion: reduce){
+  .plate svg [data-step],.plate svg .draw{transition:none}
+}
+
+/* ---- responsive ---- */
+@media (max-width:980px){
+  .layout{display:block}
+  .sidebar{position:static;width:auto;height:auto;border-right:0;border-bottom:1px solid var(--line);padding:18px 20px}
+  .toc{max-height:42vh;overflow:auto}
+  .container{padding:0 20px 90px}
+  .grid2,.grid3,.nbl{grid-template-columns:1fr}
+  .nbl > div + div{border-left:0;border-top:1px solid var(--line)}
+  .hero{padding:42px 0 24px}
+}
+@media (max-width:560px){body{font-size:16px}.container{padding:0 15px 80px}}
+
+a:focus-visible,button:focus-visible,summary:focus-visible{outline:3px solid var(--kiwi-bright);outline-offset:2px;border-radius:3px}
+</style>
+</head>
+<body>
+<div class="progress"><div class="progress__fill" id="progressFill"></div></div>
+<div class="layout">
+
+<!-- ============ SIDEBAR ============ -->
+<aside class="sidebar">
+  <a class="brand" href="#top">
+    <svg class="brand__mark" width="40" height="40" viewBox="0 0 40 40" aria-hidden="true">
+      <ellipse cx="20" cy="20" rx="17" ry="17" fill="#8a5a2b"/>
+      <ellipse cx="20" cy="20" rx="14.5" ry="14.5" fill="#dfeccf"/>
+      <circle cx="20" cy="20" r="4.4" fill="#f4f9ec"/>
+      <g fill="#1C2A14">
+        <circle cx="20" cy="10.5" r="1.05"/><circle cx="26.5" cy="13" r="1.05"/><circle cx="29.4" cy="20" r="1.05"/>
+        <circle cx="26.5" cy="27" r="1.05"/><circle cx="20" cy="29.5" r="1.05"/><circle cx="13.5" cy="27" r="1.05"/>
+        <circle cx="10.6" cy="20" r="1.05"/><circle cx="13.5" cy="13" r="1.05"/>
+        <circle cx="20" cy="14.5" r=".9"/><circle cx="24" cy="20" r=".9"/><circle cx="20" cy="25.5" r=".9"/><circle cx="16" cy="20" r=".9"/>
+      </g>
+    </svg>
+    <span>
+      <span class="brand__name">KiwiDB</span>
+      <span class="brand__sub">Viva Field Guide</span>
+    </span>
+  </a>
+  <nav class="toc" id="toc" aria-label="Contents">
+    <div class="toc__group">Foundations</div>
+    <a href="#start"><span class="n">00</span><span>How to use this guide</span></a>
+    <a href="#big-picture"><span class="n">01</span><span>The big picture</span></a>
+    <a href="#lsm-concepts"><span class="n">02</span><span>Core LSM-tree concepts</span></a>
+    <div class="toc__group">Internals</div>
+    <a href="#data-structures"><span class="n">03</span><span>Data structures</span></a>
+    <a href="#flows"><span class="n">04</span><span>Operation flows</span></a>
+    <a href="#parallelism"><span class="n">05</span><span>Parallelism &amp; the GIL</span></a>
+    <div class="toc__group">Theory &amp; defence</div>
+    <a href="#bplus-vs-lsm"><span class="n">06</span><span>B+ tree vs LSM tree</span></a>
+    <a href="#concurrency"><span class="n">07</span><span>Concurrency &amp; correctness</span></a>
+    <a href="#architecture"><span class="n">08</span><span>Architecture &amp; tooling</span></a>
+    <div class="toc__group">Exam prep</div>
+    <a href="#qa"><span class="n">09</span><span>Examiner Q&amp;A bank</span></a>
+    <a href="#recap"><span class="n">10</span><span>5-minute recap &amp; glossary</span></a>
+  </nav>
+</aside>
+
+<!-- ============ CONTENT ============ -->
+<main class="content" id="top">
+<div class="container">
+
+  <header class="hero" id="start">
+    <div class="eyebrow">B.E. Final-Year Project · Storage Engine Internals</div>
+    <h1>How KiwiDB stores data, fast and without losing it.</h1>
+    <p class="lede">KiwiDB is a <strong>log-structured merge-tree (LSM)</strong> key-value store written in Python. This guide takes you from "what is a key-value store?" all the way to compaction, process pools, and the theory an examiner will probe — one idea at a time, with a diagram for each.</p>
+    <div class="hero__meta">
+      <span class="chip"><span class="dot" style="background:var(--kiwi)"></span>Write-optimised</span>
+      <span class="chip"><span class="dot" style="background:var(--disk)"></span>Crash-safe (WAL)</span>
+      <span class="chip"><span class="dot" style="background:var(--flight)"></span>Async-first</span>
+      <span class="chip"><span class="dot" style="background:var(--seed)"></span>Python 3.12+</span>
+    </div>
+  </header>
+
+  <!-- ====================== 01 BIG PICTURE ====================== -->
+  <section class="sec" id="big-picture">
+    <div class="sec-head">
+      <div class="sec-num">01</div>
+      <h2>The big picture: a database that is really good at writing</h2>
+    </div>
+
+    <p>At its heart, KiwiDB does something simple: you give it a <strong>key</strong> and a <strong>value</strong>, and later you ask for the value back by its key. That's a <em>key-value store</em> — think of a giant dictionary, or the contacts app on your phone: "Aarav" → his phone number.</p>
+
+    <div class="callout callout--plain">
+      <div class="callout__label">▪ In plain words</div>
+      <p>A key-value store is a dictionary that survives crashes and is far bigger than your computer's memory. The hard part isn't the dictionary — it's making it <em>durable</em> (never loses data) and <em>fast</em> even when it holds far more data than fits in RAM.</p>
+    </div>
+
+    <h3>Why not just use a Python dictionary?</h3>
+    <p>A <code>dict</code> is perfect until two things happen. First, it lives only in <strong>RAM</strong> — pull the power plug and it's gone. A database must keep your data safe on <strong>disk</strong>. Second, RAM is small and expensive; real datasets are hundreds of gigabytes. So the data <em>has</em> to live on disk, and only a slice of it can be in memory at any moment.</p>
+
+    <h3>Why not just append every write to one file?</h3>
+    <p>Appending to a file is the <em>fastest</em> way to write — the disk head never jumps around, it just keeps adding to the end (a <strong>sequential write</strong>). The catch: to <em>read</em> a key you'd have to scan the entire file from start to finish — that's O(<i>n</i>), unusably slow once the file is large.</p>
+
+    <p>This is the central tension of all storage engines:</p>
+    <div class="nbl">
+      <div class="need"><h5>Fast writes want…</h5><p>To just append data to the end of a file and move on. No searching, no shuffling.</p></div>
+      <div class="benefit"><h5>Fast reads want…</h5><p>Data kept <em>sorted</em> and indexed, so any key is found in a few jumps.</p></div>
+      <div class="limit"><h5>The conflict</h5><p>Keeping data sorted on every write means shuffling the file constantly — which destroys write speed.</p></div>
+    </div>
+
+    <p>The <strong>Log-Structured Merge-tree (LSM)</strong> is one clever answer. Its bet: <em>make writes sequential and cheap now, and pay a small, batched cost later to keep reads fast.</em> Concretely:</p>
+    <ol>
+      <li>Buffer recent writes in a small, <strong>sorted, in-memory table</strong> (the <em>memtable</em>) — writes touch only RAM, so they're instant.</li>
+      <li>When that table fills up, dump it to disk in one go as a <strong>sorted file</strong> (an <em>SSTable</em>). Sequential, fast.</li>
+      <li><strong>Never edit those disk files in place.</strong> To "update" a key you just write a newer version; to "delete" you write a marker. Old versions are cleaned up later.</li>
+      <li>A background job called <strong>compaction</strong> merges the sorted files together, throwing away the dead versions and keeping reads efficient.</li>
+    </ol>
+
+    <div class="callout callout--why">
+      <div class="callout__label">◆ Why it matters</div>
+      <p>LSM trees power Cassandra, RocksDB, LevelDB, HBase, ScyllaDB and the storage layer of many cloud databases. They are the standard choice for <strong>write-heavy</strong> workloads — logging, metrics, messaging, time-series. Knowing why is exactly what an examiner wants to hear.</p>
+    </div>
+
+    <figure class="plate" data-stepper id="fig-arch">
+      <div class="plate__bar">
+        <div class="plate__title"><span class="fignum">Fig 1.1</span>Where your data lives</div>
+        <div class="stepper"><button class="step-btn" data-act="prev" aria-label="Previous step">◀ Prev</button><span class="step-count">step <b class="cur">0</b>/<span class="tot">0</span></span><button class="step-btn step-btn--primary" data-act="next" aria-label="Next step">Next ▶</button><button class="step-btn" data-act="reset" aria-label="Reset to start">Reset</button><button class="step-btn" data-act="all" aria-label="Show all steps">Show all</button></div>
+      </div>
+      <div class="plate__body plate__scroll">
+        <svg viewBox="0 0 720 408" role="img" aria-label="Layered architecture: application talks to the LSM engine, which writes to the WAL on disk and the memtable in memory; the memtable is flushed down to SSTable levels on disk.">
+          <defs>
+            <marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="#48564C"/></marker>
+            <marker id="ahg" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="#3C7B2C"/></marker>
+          </defs>
+
+          <!-- application -->
+          <g data-step="1">
+            <rect x="270" y="12" width="180" height="44" rx="9" fill="#fff" stroke="#C3CFB6"/>
+            <text x="360" y="34" text-anchor="middle" font-size="14" font-weight="700" fill="#16201A">Your application</text>
+            <text x="360" y="49" text-anchor="middle" font-size="11" fill="#7C8A7E">put(key,value) · get(key) · delete(key)</text>
+          </g>
+          <line data-step="1" x1="360" y1="56" x2="360" y2="80" stroke="#48564C" stroke-width="1.6" marker-end="url(#ah)"/>
+
+          <!-- engine -->
+          <g data-step="2">
+            <rect x="150" y="80" width="420" height="50" rx="10" fill="#16201A"/>
+            <text x="360" y="103" text-anchor="middle" font-size="15" font-weight="700" fill="#dfeccf">LSM Engine</text>
+            <text x="360" y="120" text-anchor="middle" font-size="10.5" fill="#9fb89a">orchestrates everything · assigns each write a sequence number</text>
+          </g>
+
+          <!-- branch arrows -->
+          <path data-step="3" d="M250 130 L210 162" stroke="#3C7B2C" stroke-width="1.8" fill="none" marker-end="url(#ahg)"/>
+          <path data-step="3" d="M470 130 L510 162" stroke="#2C5E8C" stroke-width="1.8" fill="none" marker-end="url(#ah)"/>
+
+          <!-- memtable (memory) -->
+          <g data-step="3">
+            <rect x="70" y="164" width="280" height="74" rx="10" fill="#E8F1DE" stroke="#3C7B2C" stroke-width="1.5"/>
+            <text x="86" y="186" font-size="13.5" font-weight="700" fill="#2C5D20">MemTable · in MEMORY</text>
+            <text x="86" y="204" font-size="11" fill="#3c5a30">a sorted skip-list — the only writable part</text>
+            <g data-step="3">
+              <rect x="86" y="212" width="40" height="16" rx="3" fill="#6FB23F"/><rect x="132" y="212" width="58" height="16" rx="3" fill="#6FB23F"/><rect x="196" y="212" width="34" height="16" rx="3" fill="#8cc862"/><rect x="236" y="212" width="48" height="16" rx="3" fill="#8cc862"/>
+            </g>
+          </g>
+
+          <!-- WAL (disk) -->
+          <g data-step="3">
+            <rect x="400" y="164" width="250" height="74" rx="10" fill="#E1ECF4" stroke="#2C5E8C" stroke-width="1.5"/>
+            <text x="416" y="186" font-size="13.5" font-weight="700" fill="#2C5E8C">Write-Ahead Log · on DISK</text>
+            <text x="416" y="204" font-size="11" fill="#345a7a">append-only safety journal (for crash recovery)</text>
+            <rect x="416" y="212" width="218" height="16" rx="3" fill="#9cc1de"/>
+          </g>
+
+          <!-- flush arrow -->
+          <path data-step="4" stroke-dasharray="6 6" d="M210 238 L210 286" stroke="#3C7B2C" stroke-width="2" fill="none" marker-end="url(#ahg)"/>
+          <text data-step="4" x="218" y="266" font-size="10.5" font-weight="700" fill="#2C5D20">flush when full</text>
+
+          <!-- SSTables (disk) -->
+          <g data-step="5">
+            <rect x="70" y="288" width="580" height="108" rx="10" fill="#EaF1F7" stroke="#2C5E8C" stroke-width="1.4"/>
+            <text x="86" y="309" font-size="13.5" font-weight="700" fill="#2C5E8C">SSTables · on DISK — sorted, immutable, layered</text>
+            <!-- levels -->
+            <g font-size="11" fill="#2C5E8C">
+              <rect x="86" y="320" width="120" height="60" rx="6" fill="#fff" stroke="#9cc1de"/><text x="146" y="344" text-anchor="middle" font-weight="700">L0</text><text x="146" y="361" text-anchor="middle" font-size="9.5" fill="#5a7e9c">fresh dumps</text>
+              <rect x="214" y="320" width="120" height="60" rx="6" fill="#fff" stroke="#9cc1de"/><text x="274" y="344" text-anchor="middle" font-weight="700">L1</text>
+              <rect x="342" y="320" width="140" height="60" rx="6" fill="#fff" stroke="#9cc1de"/><text x="412" y="344" text-anchor="middle" font-weight="700">L2</text>
+              <rect x="490" y="320" width="152" height="60" rx="6" fill="#fff" stroke="#9cc1de"/><text x="566" y="344" text-anchor="middle" font-weight="700">L3</text>
+              <text x="566" y="361" text-anchor="middle" font-size="9.5" fill="#5a7e9c">biggest, oldest</text>
+            </g>
+            <path stroke-dasharray="6 6" d="M206 350 L214 350 M334 350 L342 350 M482 350 L490 350" stroke="#2C5E8C" stroke-width="1.6" fill="none" marker-end="url(#ah)"/>
+          </g>
+        </svg>
+      </div>
+      <ol class="steplist">
+        <li data-step="1"><span class="sn">1</span><span>Your app calls put / get / delete on KiwiDB.</span></li>
+        <li data-step="2"><span class="sn">2</span><span>The engine stamps the write with a sequence number — its version.</span></li>
+        <li data-step="3"><span class="sn">3</span><span>The write goes two places at once: appended to the WAL on disk, and inserted into the memtable in memory.</span></li>
+        <li data-step="4"><span class="sn">4</span><span>When the memtable fills up, it is flushed down to a sorted SSTable in level 0.</span></li>
+        <li data-step="5"><span class="sn">5</span><span>SSTables are organised into levels L0 to L3, each about 10 times larger than the one above.</span></li>
+      </ol>
+      <div class="legend">
+        <span><i style="background:#E8F1DE;border:1px solid #3C7B2C"></i> green = lives in memory</span>
+        <span><i style="background:#E1ECF4;border:1px solid #2C5E8C"></i> blue = lives on disk</span>
+        <span><i style="background:#6FB23F"></i> a key-value record</span>
+      </div>
+      <figcaption class="plate__cap">A write goes two places at once: into the <strong>WAL on disk</strong> (so a crash can't lose it) and into the <strong>memtable in memory</strong> (so it's instantly searchable). When the memtable fills, it is flushed down into the sorted <strong>SSTable</strong> levels. Remember this picture — the rest of the guide just zooms into each box.</figcaption>
+    </figure>
+  </section>
+
+  <hr>
+
+  <!-- ====================== 02 LSM CONCEPTS ====================== -->
+  <section class="sec" id="lsm-concepts">
+    <div class="sec-head">
+      <div class="sec-num">02</div>
+      <h2>Core LSM-tree concepts</h2>
+    </div>
+    <p>Five ideas carry the whole design. Once these click, every later section is just detail.</p>
+
+    <h3>1 · Append-only, sequential writes</h3>
+    <p>KiwiDB never goes back and edits data in the middle of a file. New data is always <em>added</em> — to the end of the log, or as a brand-new file. Sequential writes are dramatically faster than scattered random writes on both spinning disks and SSDs, because there's no seeking and the operating system can batch them.</p>
+
+    <h3>2 · Data has two homes: memory and disk</h3>
+    <div class="grid2">
+      <div class="card card--mem">
+        <h4>MemTable — in memory</h4>
+        <p>A sorted, in-RAM table holding the most recent writes. It's the <strong>only</strong> part you can write to. Small (tens of MB), fast, and rebuilt from the WAL after a crash.</p>
+      </div>
+      <div class="card card--disk">
+        <h4>SSTables — on disk</h4>
+        <p><em>Sorted String Tables</em>: files of key-value pairs stored in sorted order. Once written they are <strong>immutable</strong> — never changed, only created and deleted.</p>
+      </div>
+    </div>
+
+    <h3>3 · Immutability is a feature, not a limitation</h3>
+    <p>Because an SSTable never changes after it's written, KiwiDB gets a lot for free: readers never need locks (the bytes can't move under them), the file can be safely memory-mapped and cached, and a crash can never leave a half-edited file. To change data, you simply write a <em>newer version</em> elsewhere.</p>
+
+    <div class="callout callout--plain">
+      <div class="callout__label">▪ In plain words</div>
+      <p>Updating a key doesn't overwrite the old value — it writes a new one with a higher <strong>sequence number</strong>. Deleting a key writes a special "tombstone" marker. The newest version always wins on read; the dead ones are swept away during compaction.</p>
+    </div>
+
+    <h3>4 · Levels: L0 → L1 → L2 → L3</h3>
+    <p>SSTables are organised into numbered <strong>levels</strong>. Fresh flushes land in <strong>L0</strong>. As data accumulates, compaction merges it down into <strong>L1</strong>, then <strong>L2</strong>, then <strong>L3</strong> — each level holding roughly 10× more data than the one above it. Higher-numbered levels are bigger, older, and more tidy (fully sorted with no overlaps).</p>
+
+    <h3>5 · Compaction keeps it all from rotting</h3>
+    <p>Without cleanup, the disk would fill with duplicate and deleted keys, and reads would have to check more and more files. <strong>Compaction</strong> is the background merge that takes several sorted files, merges them into one, drops superseded versions and expired tombstones, and writes the tidy result one level down.</p>
+
+    <figure class="plate" data-stepper id="fig-lifecycle">
+      <div class="plate__bar">
+        <div class="plate__title"><span class="fignum">Fig 2.1</span>The life of a key-value record</div>
+        <div class="stepper"><button class="step-btn" data-act="prev" aria-label="Previous step">◀ Prev</button><span class="step-count">step <b class="cur">0</b>/<span class="tot">0</span></span><button class="step-btn step-btn--primary" data-act="next" aria-label="Next step">Next ▶</button><button class="step-btn" data-act="reset" aria-label="Reset to start">Reset</button><button class="step-btn" data-act="all" aria-label="Show all steps">Show all</button></div>
+      </div>
+      <div class="plate__body plate__scroll">
+        <svg viewBox="0 0 720 250" role="img" aria-label="Lifecycle: a record enters the memtable in memory, is flushed to L0 on disk, then compacted downward through L1, L2, L3, getting larger and tidier.">
+          <defs><marker id="ah2" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="#48564C"/></marker></defs>
+          <!-- memory zone -->
+          <rect data-step="1" x="20" y="40" width="150" height="150" rx="10" fill="#E8F1DE" stroke="#3C7B2C" stroke-width="1.4"/>
+          <text data-step="1" x="95" y="32" text-anchor="middle" font-size="11" font-weight="700" fill="#2C5D20">MEMORY</text>
+          <g data-step="1"><rect x="44" y="78" width="100" height="20" rx="4" fill="#6FB23F"/><rect x="44" y="104" width="100" height="20" rx="4" fill="#8cc862"/><rect x="44" y="130" width="100" height="20" rx="4" fill="#a9d486"/></g>
+          <text data-step="1" x="95" y="172" text-anchor="middle" font-size="11" font-weight="700" fill="#2C5D20">MemTable</text>
+
+          <!-- disk zone label -->
+          <text data-step="2" x="450" y="32" text-anchor="middle" font-size="11" font-weight="700" fill="#2C5E8C">DISK — sorted &amp; immutable</text>
+
+          <!-- flush arrow -->
+          <line data-step="2" x1="172" y1="115" x2="210" y2="115" stroke="#48564C" stroke-width="1.7" marker-end="url(#ah2)"/>
+          <text data-step="2" x="191" y="106" text-anchor="middle" font-size="9.5" fill="#48564C">flush</text>
+
+          <!-- L0 -->
+          <g data-step="2">
+            <rect x="214" y="60" width="92" height="110" rx="8" fill="#EaF1F7" stroke="#2C5E8C" stroke-width="1.3"/>
+            <rect x="226" y="76" width="68" height="18" rx="3" fill="#fff" stroke="#9cc1de"/><rect x="226" y="100" width="68" height="18" rx="3" fill="#fff" stroke="#9cc1de"/><rect x="226" y="124" width="68" height="18" rx="3" fill="#fff" stroke="#9cc1de"/>
+            <text x="260" y="160" text-anchor="middle" font-size="11" font-weight="700" fill="#2C5E8C">L0</text>
+          </g>
+          <line data-step="3" x1="308" y1="115" x2="338" y2="115" stroke="#48564C" stroke-width="1.7" marker-end="url(#ah2)"/>
+          <text data-step="3" x="323" y="106" text-anchor="middle" font-size="9" fill="#48564C">compact</text>
+
+          <!-- L1 -->
+          <g data-step="3">
+            <rect x="342" y="68" width="80" height="94" rx="8" fill="#dCe9f3" stroke="#2C5E8C" stroke-width="1.3"/>
+            <text x="382" y="120" text-anchor="middle" font-size="13" font-weight="700" fill="#2C5E8C">L1</text>
+          </g>
+          <line data-step="4" x1="424" y1="115" x2="452" y2="115" stroke="#48564C" stroke-width="1.7" marker-end="url(#ah2)"/>
+
+          <!-- L2 -->
+          <g data-step="4">
+            <rect x="456" y="60" width="104" height="110" rx="8" fill="#cfe1ef" stroke="#2C5E8C" stroke-width="1.3"/>
+            <text x="508" y="120" text-anchor="middle" font-size="13" font-weight="700" fill="#2C5E8C">L2</text>
+          </g>
+          <line data-step="5" x1="562" y1="115" x2="590" y2="115" stroke="#48564C" stroke-width="1.7" marker-end="url(#ah2)"/>
+
+          <!-- L3 -->
+          <g data-step="5">
+            <rect x="594" y="50" width="112" height="130" rx="8" fill="#c2d8ea" stroke="#2C5E8C" stroke-width="1.3"/>
+            <text x="650" y="118" text-anchor="middle" font-size="13" font-weight="700" fill="#2C5E8C">L3</text>
+            <text x="650" y="200" text-anchor="middle" font-size="9.5" fill="#5a7e9c">biggest · oldest</text>
+          </g>
+          <text data-step="5" x="360" y="226" text-anchor="middle" font-size="10.5" fill="#7C8A7E">each level ≈ 10× the size of the one before it</text>
+        </svg>
+      </div>
+      <ol class="steplist">
+        <li data-step="1"><span class="sn">1</span><span>A record is born in the in-memory memtable.</span></li>
+        <li data-step="2"><span class="sn">2</span><span>When the memtable fills, it is flushed once to a sorted SSTable in level 0 on disk.</span></li>
+        <li data-step="3"><span class="sn">3</span><span>Compaction later merges level 0 into level 1...</span></li>
+        <li data-step="4"><span class="sn">4</span><span>...and level 1 into level 2...</span></li>
+        <li data-step="5"><span class="sn">5</span><span>...and level 2 into level 3 — each level bigger, older and tidier than the last.</span></li>
+      </ol>
+      <figcaption class="plate__cap">A record is born in memory, flushed once to L0, then merged steadily downward. It moves <em>away</em> from where writes happen and <em>toward</em> bigger, tidier, rarely-touched levels — the same direction cold data naturally drifts.</figcaption>
+    </figure>
+
+    <h3>The price of the design: three "amplifications"</h3>
+    <p>Every storage engine trades off three costs. Examiners love these terms, so learn them as a set:</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Amplification</th><th>Plain meaning</th><th>In an LSM tree</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Write</strong></td><td>How many times one logical write gets re-written to disk.</td><td><span class="lose">Higher</span> — a record is written once on flush, then re-written each time compaction moves it down a level.</td></tr>
+          <tr><td><strong>Read</strong></td><td>How many places you might have to look to answer one read.</td><td><span class="lose">Higher</span> — a key could be in the memtable or any level, so reads may probe several files (bloom filters tame this).</td></tr>
+          <tr><td><strong>Space</strong></td><td>Extra disk used beyond the live data.</td><td><span class="lose">Higher temporarily</span> — dead versions &amp; tombstones linger until compaction reclaims them.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout callout--exam">
+      <div class="callout__label">★ If the examiner asks…</div>
+      <p>"What does an LSM tree trade away for fast writes?" → <em>It accepts higher write, read, and space amplification.</em> Compaction is the mechanism that pays down read and space amplification, at the cost of more write amplification. That single sentence shows you understand the whole trade-off.</p>
+    </div>
+    <details class="deeper"><summary>Go deeper: why does writing more actually make things faster?</summary>
+      <div>
+        <p>It sounds backwards — LSM writes data <em>several times</em> (flush, then each compaction) yet is praised for write speed. The trick is <strong>what kind</strong> of writes they are. The user-facing write only touches RAM and a sequential log append, both nearly free. The extra writes happen in the <em>background</em>, in big sequential batches, off the critical path of your request. So the user sees low latency, while the expensive-but-batched re-writing is hidden. A B+ tree, by contrast, does a random-access write <em>synchronously</em> on the user's path. Trading random writes for batched sequential ones is the whole game.</p>
+      </div>
+    </details>
+  </section>
+
+  <hr>
+
+  <!-- ====================== 03 DATA STRUCTURES ====================== -->
+  <section class="sec" id="data-structures">
+    <div class="sec-head">
+      <div class="sec-num">03</div>
+      <h2>The data structures, one at a time</h2>
+    </div>
+    <p>KiwiDB is really a small toolbox of classic data structures, each chosen for one job. We'll take them in the order data actually flows through them: from the in-memory skip list, through the log and on-disk tables, to the structures that make reads fast.</p>
+
+    <!-- 3.1 SKIP LIST -->
+    <h3>3.1 · The skip list — the memtable's engine</h3>
+    <p><span class="chip chip--mem"><span class="dot" style="background:var(--kiwi)"></span>in memory</span> &nbsp;<code>app/memtable/skiplist.py</code></p>
+    <p>The memtable must keep keys <strong>sorted</strong> (so flushing produces a sorted file) and allow <strong>fast insert, update and lookup</strong> while many writers hammer it at once. KiwiDB uses a <strong>skip list</strong> — a sorted linked list with extra "express lanes" stacked on top.</p>
+
+    <div class="callout callout--plain">
+      <div class="callout__label">▪ In plain words — the highway analogy</div>
+      <p>Imagine a highway where the bottom lane stops at <em>every</em> town (every key, in order). Above it sit express lanes that skip most towns. To find a town you ride the highest express lane until the next stop would overshoot, then drop down a lane and repeat. You zoom past most of the list and arrive in about <strong>log(n)</strong> hops instead of checking every node.</p>
+    </div>
+
+    <p>Each node is given a random <em>height</em> when created (the <code>_random_level</code> method): roughly half the nodes reach level 1, a quarter reach level 2, and so on. That probabilistic shape is what gives the express lanes their balanced, no-rebalancing-needed structure — unlike a balanced tree, you never have to rotate or rebuild anything.</p>
+
+    <figure class="plate" data-stepper id="fig-skiplist">
+      <div class="plate__bar">
+        <div class="plate__title"><span class="fignum">Fig 3.1</span>Searching a skip list for key <b>17</b></div>
+        <div class="stepper"><button class="step-btn" data-act="prev" aria-label="Previous step">◀ Prev</button><span class="step-count">step <b class="cur">0</b>/<span class="tot">0</span></span><button class="step-btn step-btn--primary" data-act="next" aria-label="Next step">Next ▶</button><button class="step-btn" data-act="reset" aria-label="Reset to start">Reset</button><button class="step-btn" data-act="all" aria-label="Show all steps">Show all</button></div>
+      </div>
+      <div class="plate__body plate__scroll">
+        <svg viewBox="0 0 720 232" role="img" aria-label="A three-level skip list. The search starts in the top express lane, advances while the next key is not too big, drops a level when it would overshoot, and lands on key 17.">
+          <defs><marker id="ahs" markerWidth="9" markerHeight="9" refX="6.5" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="#C2811B"/></marker></defs>
+          <!-- level labels -->
+          <g font-size="10.5" fill="#7C8A7E" font-weight="700">
+            <text x="8" y="64">L2</text><text x="8" y="128">L1</text><text x="8" y="192">L0</text>
+          </g>
+          <!-- baseline connectors -->
+          <g stroke="#C3CFB6" stroke-width="1.5">
+            <line x1="44" y1="186" x2="668" y2="186"/>
+            <line x1="44" y1="122" x2="668" y2="122"/>
+            <line x1="44" y1="58"  x2="668" y2="58"/>
+          </g>
+          <!-- nodes: L0 all -->
+          <g font-size="12" font-weight="700" text-anchor="middle">
+            <!-- head -->
+            <g data-step="0"><rect x="30" y="44" width="28" height="156" rx="5" fill="#16201A"/><text x="44" y="196" fill="#dfeccf" font-size="9">HEAD</text></g>
+            <!-- L0 row -->
+            <g data-step="0" fill="#2C5D20">
+              <rect x="100" y="172" width="40" height="28" rx="5" fill="#fff" stroke="#3C7B2C"/><text x="120" y="191">3</text>
+              <rect x="180" y="172" width="40" height="28" rx="5" fill="#fff" stroke="#3C7B2C"/><text x="200" y="191">6</text>
+              <rect x="260" y="172" width="40" height="28" rx="5" fill="#fff" stroke="#3C7B2C"/><text x="280" y="191">9</text>
+              <rect x="350" y="172" width="40" height="28" rx="5" fill="#fff" stroke="#3C7B2C"/><text x="370" y="191">12</text>
+              <rect x="450" y="172" width="40" height="28" rx="5" fill="#fff" stroke="#3C7B2C" stroke-width="2"/><text x="470" y="191">17</text>
+              <rect x="550" y="172" width="40" height="28" rx="5" fill="#fff" stroke="#3C7B2C"/><text x="570" y="191">25</text>
+              <rect x="640" y="172" width="28" height="28" rx="5" fill="#eef2e8" stroke="#C3CFB6"/><text x="654" y="190" font-size="9" fill="#7C8A7E">NIL</text>
+            </g>
+            <!-- L1 row: 6,12,17,25 -->
+            <g data-step="0" fill="#2C5D20">
+              <rect x="180" y="108" width="40" height="28" rx="5" fill="#eef7e6" stroke="#6FB23F"/><text x="200" y="127">6</text>
+              <rect x="350" y="108" width="40" height="28" rx="5" fill="#eef7e6" stroke="#6FB23F"/><text x="370" y="127">12</text>
+              <rect x="450" y="108" width="40" height="28" rx="5" fill="#eef7e6" stroke="#6FB23F"/><text x="470" y="127">17</text>
+              <rect x="550" y="108" width="40" height="28" rx="5" fill="#eef7e6" stroke="#6FB23F"/><text x="570" y="127">25</text>
+            </g>
+            <!-- L2 row: 12 -->
+            <g data-step="0" fill="#2C5D20">
+              <rect x="350" y="44" width="40" height="28" rx="5" fill="#e2f1d4" stroke="#6FB23F"/><text x="370" y="63">12</text>
+            </g>
+          </g>
+          <!-- search path (amber) -->
+          <g stroke="#C2811B" stroke-width="2.6" fill="none">
+            <path data-step="1" class="draw" style="--len:330" d="M58 58 H350" marker-end="url(#ahs)"/>      <!-- L2 head->12 -->
+            <path data-step="2" class="draw" style="--len:64" d="M370 72 V108" marker-end="url(#ahs)"/>      <!-- drop to L1 -->
+            <path data-step="3" class="draw" style="--len:100" d="M390 122 H450" marker-end="url(#ahs)"/>     <!-- L1 12->17 -->
+            <path data-step="4" class="draw" style="--len:64" d="M470 136 V172" marker-end="url(#ahs)"/>      <!-- drop to L0 found -->
+          </g>
+          <g data-step="4"><rect x="448" y="170" width="44" height="32" rx="6" fill="none" stroke="#C2811B" stroke-width="2.5"/></g>
+          <text data-step="4" x="470" y="222" text-anchor="middle" font-size="10.5" font-weight="700" fill="#C2811B">found in 3 hops</text>
+        </svg>
+      </div>
+      <ol class="steplist">
+        <li data-step="1"><span class="sn">1</span><span>Start in the top express lane (L2) at HEAD and hop right to 12 — since 12 is not past 17, keep going. The next node is NIL, which would overshoot.</span></li>
+        <li data-step="2"><span class="sn">2</span><span>Drop down one lane to L1 at node 12.</span></li>
+        <li data-step="3"><span class="sn">3</span><span>In L1, advance from 12 to 17.</span></li>
+        <li data-step="4"><span class="sn">4</span><span>Drop to the bottom lane (L0): found 17 — in just 3 hops instead of scanning all 7 nodes.</span></li>
+      </ol>
+      <div class="legend">
+        <span><i style="background:#e2f1d4;border:1px solid #6FB23F"></i> express-lane node</span>
+        <span><i style="background:#fff;border:1px solid #3C7B2C"></i> level-0 node (every key)</span>
+        <span><i style="background:#C2811B"></i> the search path</span>
+      </div>
+      <figcaption class="plate__cap">Searching <b>17</b>: ride L2 from HEAD to 12 (12 ≤ 17, keep going; next is NIL, too far) → drop to L1 → advance 12→17 → drop to L0 and land. A list of 7 keys was crossed in 3 hops; with thousands of keys the saving is enormous. Insert and delete use the same search to find the spot, then relink pointers.</figcaption>
+    </figure>
+
+    <h4>How it stays correct with many writers at once</h4>
+    <p>This is the cleverest part of KiwiDB and a likely viva target. Multiple async tasks can write simultaneously, so the skip list uses <strong>fine-grained, per-node locking</strong> rather than one big lock:</p>
+    <ul>
+      <li><strong>Reads take no locks at all.</strong> A <code>get</code> just walks the pointers. A node becomes visible to readers only after a <code>fully_linked</code> flag is set as the <em>last</em> step of insertion, so a reader never sees a half-linked node.</li>
+      <li><strong>Inserts lock only the handful of nodes they touch</strong> — the predecessors at each level of the new node — not the whole list. Other writers working elsewhere proceed in parallel.</li>
+      <li><strong>Locks are always acquired in a fixed order</strong> (ascending Python <code>id()</code> of the nodes). Consistent ordering is the textbook way to make deadlock impossible.</li>
+      <li><strong>Validate-then-retry.</strong> After locking, the insert re-checks that the predecessors still point where it expects. If another writer slipped in, it releases and retries. This is <em>optimistic concurrency</em> — assume no conflict, verify, redo on the rare clash.</li>
+    </ul>
+    <div class="callout callout--exam">
+      <div class="callout__label">★ If the examiner asks…</div>
+      <p>"Why a skip list and not a balanced tree (like a red-black or AVL tree)?" → Skip lists give the same <strong>O(log n)</strong> search but are far simpler to make <strong>concurrent</strong>: insertion only relinks a few pointers, so fine-grained locking and lock-free reads are easy. Balanced trees need rotations that can ripple across the structure, which is painful to lock correctly.</p>
+    </div>
+
+    <!-- 3.2 MEMTABLE -->
+    <h3>3.2 · The MemTable — active table plus a flush queue</h3>
+    <p><span class="chip chip--mem"><span class="dot" style="background:var(--kiwi)"></span>in memory</span> &nbsp;<code>app/memtable/</code>, <code>app/engine/memtable_manager.py</code></p>
+    <p>There are two flavours of memtable, managed together:</p>
+    <div class="grid2">
+      <div class="card card--mem"><h4>Active memtable</h4><p>The single writable skip list. Every <code>put</code> and <code>delete</code> lands here first. It tracks its own size and entry count.</p></div>
+      <div class="card card--disk"><h4>Immutable queue</h4><p>When the active table is full it is <strong>frozen</strong> and moved into a short queue (up to 4 tables) awaiting flush. Frozen tables are read-only sorted lists — searched by binary search.</p></div>
+    </div>
+    <p>When the active table crosses its threshold (counted as <em>entries</em> in dev mode, <em>bytes</em> in prod mode), the manager <strong>freezes</strong> it: it snapshots the data, pushes the frozen table onto the queue, and starts a fresh empty active table — so writes never block waiting for a flush. If the queue is already full, new writes feel gentle <strong>backpressure</strong> (they wait, with a timeout) until the flush pipeline drains a slot. A read checks the active table first, then the queued tables newest-first, so the most recent value always wins.</p>
+
+    <!-- 3.3 WAL -->
+    <h3>3.3 · The Write-Ahead Log (WAL) — the safety journal</h3>
+    <p><span class="chip chip--disk"><span class="dot" style="background:var(--disk)"></span>on disk</span> &nbsp;<code>app/wal/writer.py</code></p>
+    <p>The memtable lives in RAM, so a crash would erase every write that hadn't been flushed yet. The WAL prevents that. <strong>Before</strong> a write touches the memtable, it is appended to the WAL on disk. If the process dies, KiwiDB <em>replays</em> the WAL on startup to rebuild the exact memtable that was lost.</p>
+    <div class="callout callout--plain">
+      <div class="callout__label">▪ In plain words</div>
+      <p>The WAL is like jotting a task in your notebook <em>before</em> you start doing it. If you're interrupted, the notebook tells you exactly what was in progress so you can finish it. "Write-ahead" literally means: write to the log <em>ahead of</em> changing anything else.</p>
+    </div>
+    <p>Each record is stored in a self-describing frame so a half-written tail (from a crash mid-append) can be detected and ignored:</p>
+    <pre><code>WAL frame:  <span class="hl">[ 4-byte length ]</span> <span class="hl">[ msgpack payload ]</span> <span class="hl">[ 4-byte CRC32 ]</span>
+            └ how many bytes  └ the key, value,    └ checksum — if it
+              follow            seq, timestamp        doesn't match, stop</code></pre>
+    <p>On replay, KiwiDB reads the length, reads that many bytes, and verifies the <abbr title="Cyclic Redundancy Check — a checksum that detects accidental corruption or truncation">CRC32</abbr>. A mismatch means the log was truncated by a crash, so replay stops cleanly at the last <em>good</em> record. Once a memtable is safely flushed to an SSTable, the WAL is <strong>truncated</strong> (old entries dropped by writing the survivors to a temp file and atomically swapping it in) so the log never grows without bound.</p>
+
+    <!-- 3.4 SSTABLE FORMAT -->
+    <h3>3.4 · The SSTable — sorted, immutable, on disk</h3>
+    <p><span class="chip chip--disk"><span class="dot" style="background:var(--disk)"></span>on disk</span> &nbsp;<code>app/sstable/writer.py</code>, <code>reader.py</code></p>
+    <p>An SSTable isn't one file — it's a small folder of four files that together make a key fast to find without reading the whole table:</p>
+    <figure class="plate" data-stepper id="fig-sstable">
+      <div class="plate__bar">
+        <div class="plate__title"><span class="fignum">Fig 3.2</span>Anatomy of one SSTable on disk</div>
+        <div class="stepper"><button class="step-btn" data-act="prev" aria-label="Previous step">◀ Prev</button><span class="step-count">step <b class="cur">0</b>/<span class="tot">0</span></span><button class="step-btn step-btn--primary" data-act="next" aria-label="Next step">Next ▶</button><button class="step-btn" data-act="reset" aria-label="Reset to start">Reset</button><button class="step-btn" data-act="all" aria-label="Show all steps">Show all</button></div>
+      </div>
+      <div class="plate__body plate__scroll">
+        <svg viewBox="0 0 720 296" role="img" aria-label="An SSTable directory contains data.bin, index.bin, filter.bin and meta.json. The data file holds sorted records grouped into blocks; each record has length headers, sequence, timestamp, key, value and a CRC.">
+          <!-- folder -->
+          <g data-step="1">
+            <path d="M30 24 h70 l12 14 h140 a6 6 0 0 1 6 6 v18 h-228 a6 6 0 0 1 -6 -6 v-46 a6 6 0 0 1 6 -6 z" fill="#cdbf9a"/>
+            <text x="40" y="54" font-size="11" font-weight="700" fill="#5b4a23">L0 / 019ab… /</text>
+          </g>
+          <!-- four files -->
+          <g font-size="11.5" font-weight="700">
+            <g data-step="2"><rect x="30" y="78" width="150" height="58" rx="8" fill="#E1ECF4" stroke="#2C5E8C"/><text x="105" y="100" text-anchor="middle" fill="#2C5E8C">data.bin</text><text x="105" y="118" text-anchor="middle" font-size="9.5" font-weight="400" fill="#345a7a">the sorted records</text><text x="105" y="130" text-anchor="middle" font-size="9.5" font-weight="400" fill="#345a7a">grouped into blocks</text></g>
+            <g data-step="3"><rect x="194" y="78" width="150" height="58" rx="8" fill="#fff" stroke="#9cc1de"/><text x="269" y="100" text-anchor="middle" fill="#2C5E8C">index.bin</text><text x="269" y="118" text-anchor="middle" font-size="9.5" font-weight="400" fill="#345a7a">sparse index:</text><text x="269" y="130" text-anchor="middle" font-size="9.5" font-weight="400" fill="#345a7a">first key → block offset</text></g>
+            <g data-step="4"><rect x="358" y="78" width="150" height="58" rx="8" fill="#fff" stroke="#9cc1de"/><text x="433" y="100" text-anchor="middle" fill="#2C5E8C">filter.bin</text><text x="433" y="118" text-anchor="middle" font-size="9.5" font-weight="400" fill="#345a7a">bloom filter:</text><text x="433" y="130" text-anchor="middle" font-size="9.5" font-weight="400" fill="#345a7a">"is this key absent?"</text></g>
+            <g data-step="5"><rect x="522" y="78" width="166" height="58" rx="8" fill="#E8F1DE" stroke="#3C7B2C"/><text x="605" y="100" text-anchor="middle" fill="#2C5D20">meta.json</text><text x="605" y="118" text-anchor="middle" font-size="9.5" font-weight="400" fill="#3c5a30">written LAST —</text><text x="605" y="130" text-anchor="middle" font-size="9.5" font-weight="400" fill="#3c5a30">"table is complete" flag</text></g>
+          </g>
+          <!-- blocks inside data.bin -->
+          <line data-step="6" x1="105" y1="136" x2="105" y2="166" stroke="#48564C" stroke-width="1.4" stroke-dasharray="3 3"/>
+          <text data-step="6" x="40" y="184" font-size="10.5" fill="#7C8A7E" font-weight="700">inside data.bin — sorted records, packed into ~4 KB blocks:</text>
+          <g data-step="6">
+            <rect x="40" y="192" width="150" height="26" rx="4" fill="#dCe9f3" stroke="#9cc1de"/><text x="115" y="209" text-anchor="middle" font-size="10" fill="#2C5E8C">block 1 (keys a–f)</text>
+            <rect x="196" y="192" width="150" height="26" rx="4" fill="#dCe9f3" stroke="#9cc1de"/><text x="271" y="209" text-anchor="middle" font-size="10" fill="#2C5E8C">block 2 (keys g–m)</text>
+            <rect x="352" y="192" width="150" height="26" rx="4" fill="#dCe9f3" stroke="#9cc1de"/><text x="427" y="209" text-anchor="middle" font-size="10" fill="#2C5E8C">block 3 (keys n–z)</text>
+          </g>
+          <!-- record byte strip -->
+          <text data-step="7" x="40" y="244" font-size="10.5" fill="#7C8A7E" font-weight="700">one record's bytes:</text>
+          <g data-step="7" font-size="9.5" text-anchor="middle" font-weight="700">
+            <rect x="40" y="250" width="58" height="30" rx="4" fill="#fff" stroke="#C3CFB6"/><text x="69" y="266" fill="#48564C">key len</text><text x="69" y="277" font-size="8" font-weight="400" fill="#7C8A7E">4 B</text>
+            <rect x="100" y="250" width="58" height="30" rx="4" fill="#fff" stroke="#C3CFB6"/><text x="129" y="266" fill="#48564C">val len</text><text x="129" y="277" font-size="8" font-weight="400" fill="#7C8A7E">4 B</text>
+            <rect x="160" y="250" width="70" height="30" rx="4" fill="#E8F1DE" stroke="#3C7B2C"/><text x="195" y="266" fill="#2C5D20">seq #</text><text x="195" y="277" font-size="8" font-weight="400" fill="#3c5a30">8 B</text>
+            <rect x="232" y="250" width="78" height="30" rx="4" fill="#fff" stroke="#C3CFB6"/><text x="271" y="266" fill="#48564C">timestamp</text><text x="271" y="277" font-size="8" font-weight="400" fill="#7C8A7E">8 B</text>
+            <rect x="312" y="250" width="90" height="30" rx="4" fill="#EaF1F7" stroke="#9cc1de"/><text x="357" y="269" fill="#2C5E8C">key bytes</text>
+            <rect x="404" y="250" width="130" height="30" rx="4" fill="#EaF1F7" stroke="#9cc1de"/><text x="469" y="269" fill="#2C5E8C">value bytes</text>
+            <rect x="536" y="250" width="70" height="30" rx="4" fill="#F6E2E1" stroke="#AE3F3C"/><text x="571" y="266" fill="#AE3F3C">CRC32</text><text x="571" y="277" font-size="8" font-weight="400" fill="#9a4340">4 B</text>
+          </g>
+        </svg>
+      </div>
+      <ol class="steplist">
+        <li data-step="1"><span class="sn">1</span><span>An SSTable is a small folder, named with a time-ordered UUIDv7.</span></li>
+        <li data-step="2"><span class="sn">2</span><span>data.bin holds the actual key-value records, in sorted order.</span></li>
+        <li data-step="3"><span class="sn">3</span><span>index.bin is the sparse index: first-key to block-offset.</span></li>
+        <li data-step="4"><span class="sn">4</span><span>filter.bin is the bloom filter that answers 'could this key be here?'.</span></li>
+        <li data-step="5"><span class="sn">5</span><span>meta.json is written LAST — its presence is the 'this table is complete' flag.</span></li>
+        <li data-step="6"><span class="sn">6</span><span>Inside data.bin, records are packed into blocks of about 4 KB.</span></li>
+        <li data-step="7"><span class="sn">7</span><span>Each record's bytes: key and value lengths, the sequence number, a timestamp, the key, the value, and a CRC32 checksum.</span></li>
+      </ol>
+      <div class="legend">
+        <span><i style="background:#E8F1DE;border:1px solid #3C7B2C"></i> the version number (seq)</span>
+        <span><i style="background:#F6E2E1;border:1px solid #AE3F3C"></i> integrity checksum</span>
+        <span><i style="background:#dCe9f3;border:1px solid #9cc1de"></i> a data block</span>
+      </div>
+      <figcaption class="plate__cap"><strong>data.bin</strong> holds the records in sorted order, packed into blocks of about 4&nbsp;KB. <strong>index.bin</strong> and <strong>filter.bin</strong> are tiny helper files that let a reader jump straight to the right block. <strong>meta.json is written last on purpose</strong>: if it exists, the table is known to be complete — so a crash mid-write simply leaves a folder with no meta.json, which recovery safely ignores.</figcaption>
+    </figure>
+    <div class="nbl">
+      <div class="need"><h5>Why store records sorted?</h5><p>So lookups can binary-search and so two SSTables can be merged in one linear pass (the basis of compaction).</p></div>
+      <div class="benefit"><h5>Why blocks?</h5><p>Disks read in chunks. Grouping records into ~4&nbsp;KB blocks means one read fetches many records, and the cache can hold whole blocks.</p></div>
+      <div class="limit"><h5>Why CRC on every record?</h5><p>Disks bit-rot and crashes truncate. The checksum lets a read detect corruption instead of returning garbage.</p></div>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- 03 continued -->
+  <section class="sec" id="data-structures-2" style="padding-top:8px">
+
+    <!-- 3.5 BLOOM FILTER -->
+    <h3>3.5 · The Bloom filter — "is this key definitely <em>not</em> here?"</h3>
+    <p><span class="chip chip--disk"><span class="dot" style="background:var(--disk)"></span>per SSTable</span> &nbsp;<code>app/bloom/filter.py</code></p>
+    <p>A read might have to check many SSTables. Most of them won't contain the key — so opening and scanning them is wasted work. A <strong>bloom filter</strong> is a tiny, probabilistic gatekeeper that answers one question very fast: <em>"could this key be in this table?"</em></p>
+    <div class="callout callout--plain">
+      <div class="callout__label">▪ In plain words — the bouncer analogy</div>
+      <p>A bloom filter is like a club bouncer with an imperfect memory. Ask "is Sam on the guest list?" and the bouncer can say <strong>"definitely not"</strong> (then you don't waste time going in) or <strong>"maybe — go check"</strong>. It never wrongly turns away a real guest (no false negatives), but it occasionally waves through a stranger (a false positive). That trade is exactly what we want: a cheap, certain <em>no</em> saves an expensive disk read.</p>
+    </div>
+    <p>It works with a bit array and a few hash functions. To <strong>add</strong> a key, hash it <i>k</i> different ways and set those bits to 1. To <strong>test</strong> a key, hash it the same ways: if <em>any</em> of those bits is 0, the key was never added — a guaranteed <strong>no</strong>. If all are 1, it's <em>probably</em> present (or a rare collision — a false positive).</p>
+
+    <figure class="plate" data-stepper id="fig-bloom">
+      <div class="plate__bar">
+        <div class="plate__title"><span class="fignum">Fig 3.3</span>Bloom filter: adding keys, then testing two</div>
+        <div class="stepper"><button class="step-btn" data-act="prev" aria-label="Previous step">◀ Prev</button><span class="step-count">step <b class="cur">0</b>/<span class="tot">0</span></span><button class="step-btn step-btn--primary" data-act="next" aria-label="Next step">Next ▶</button><button class="step-btn" data-act="reset" aria-label="Reset to start">Reset</button><button class="step-btn" data-act="all" aria-label="Show all steps">Show all</button></div>
+      </div>
+      <div class="plate__body plate__scroll">
+        <svg viewBox="0 0 720 268" role="img" aria-label="Adding apple sets bits 3,9,14; adding mango sets bits 6,9,11. Testing grape hits bit 2 which is 0, so grape is definitely not present. Testing apple finds all its bits set, so apple is maybe present.">
+          <!-- bit array -->
+          <text data-step="0" x="20" y="34" font-size="11" font-weight="700" fill="#7C8A7E">bit array (all start at 0):</text>
+          <g font-size="11" text-anchor="middle" font-weight="700">
+            <!-- 16 cells, x from 20 step 42 -->
+            <g data-step="0" fill="#7C8A7E">
+              <!-- indices row -->
+              <text x="41" y="52" font-size="9" fill="#aab3a3">0</text><text x="83" y="52" font-size="9" fill="#aab3a3">1</text><text x="125" y="52" font-size="9" fill="#aab3a3">2</text><text x="167" y="52" font-size="9" fill="#aab3a3">3</text><text x="209" y="52" font-size="9" fill="#aab3a3">4</text><text x="251" y="52" font-size="9" fill="#aab3a3">5</text><text x="293" y="52" font-size="9" fill="#aab3a3">6</text><text x="335" y="52" font-size="9" fill="#aab3a3">7</text><text x="377" y="52" font-size="9" fill="#aab3a3">8</text><text x="419" y="52" font-size="9" fill="#aab3a3">9</text><text x="461" y="52" font-size="9" fill="#aab3a3">10</text><text x="503" y="52" font-size="9" fill="#aab3a3">11</text><text x="545" y="52" font-size="9" fill="#aab3a3">12</text><text x="587" y="52" font-size="9" fill="#aab3a3">13</text><text x="629" y="52" font-size="9" fill="#aab3a3">14</text><text x="671" y="52" font-size="9" fill="#aab3a3">15</text>
+            </g>
+          </g>
+          <!-- the 16 bit cells -->
+          <g id="bloomcells">
+            <rect x="22" y="58" width="38" height="34" rx="4" fill="#fff" stroke="#C3CFB6"/>
+            <rect x="64" y="58" width="38" height="34" rx="4" fill="#fff" stroke="#C3CFB6"/>
+            <rect x="106" y="58" width="38" height="34" rx="4" fill="#fff" stroke="#C3CFB6"/>
+            <rect x="148" y="58" width="38" height="34" rx="4" fill="#fff" stroke="#C3CFB6"/><rect data-step="1" x="148" y="58" width="38" height="34" rx="4" fill="#6FB23F"/>
+            <rect x="190" y="58" width="38" height="34" rx="4" fill="#fff" stroke="#C3CFB6"/>
+            <rect x="232" y="58" width="38" height="34" rx="4" fill="#fff" stroke="#C3CFB6"/>
+            <rect data-step="2" x="274" y="58" width="38" height="34" rx="4" fill="#6FB23F"/>
+            <rect x="316" y="58" width="38" height="34" rx="4" fill="#fff" stroke="#C3CFB6"/>
+            <rect x="358" y="58" width="38" height="34" rx="4" fill="#fff" stroke="#C3CFB6"/>
+            <rect data-step="1" x="400" y="58" width="38" height="34" rx="4" fill="#6FB23F"/>
+            <rect x="442" y="58" width="38" height="34" rx="4" fill="#fff" stroke="#C3CFB6"/>
+            <rect data-step="2" x="484" y="58" width="38" height="34" rx="4" fill="#6FB23F"/>
+            <rect x="526" y="58" width="38" height="34" rx="4" fill="#fff" stroke="#C3CFB6"/>
+            <rect x="568" y="58" width="38" height="34" rx="4" fill="#fff" stroke="#C3CFB6"/>
+            <rect data-step="1" x="610" y="58" width="38" height="34" rx="4" fill="#6FB23F"/>
+            <rect x="652" y="58" width="38" height="34" rx="4" fill="#fff" stroke="#C3CFB6"/>
+          </g>
+          <!-- add operations -->
+          <g data-step="1"><rect x="22" y="108" width="150" height="24" rx="5" fill="#E8F1DE" stroke="#3C7B2C"/><text x="32" y="125" font-size="11" font-weight="700" fill="#2C5D20">add("apple")</text><text x="180" y="125" font-size="10.5" fill="#3c5a30">→ set bits 3, 9, 14</text></g>
+          <g data-step="2"><rect x="22" y="138" width="150" height="24" rx="5" fill="#E8F1DE" stroke="#3C7B2C"/><text x="32" y="155" font-size="11" font-weight="700" fill="#2C5D20">add("mango")</text><text x="180" y="155" font-size="10.5" fill="#3c5a30">→ set bits 6, 9, 11 &nbsp;(9 already set — collisions are fine)</text></g>
+
+          <!-- test grape -->
+          <g data-step="3">
+            <rect x="22" y="178" width="320" height="34" rx="6" fill="#F6E2E1" stroke="#AE3F3C"/>
+            <text x="34" y="200" font-size="11.5" font-weight="700" fill="#AE3F3C">may_contain("grape")? → check 2, 9, 15</text>
+          </g>
+          <g data-step="4"><rect x="106" y="56" width="42" height="38" rx="5" fill="none" stroke="#AE3F3C" stroke-width="2.5"/></g>
+          <text data-step="4" x="360" y="200" font-size="11.5" font-weight="700" fill="#AE3F3C">bit 2 = 0 → DEFINITELY NOT here ✓ (skip this table)</text>
+
+          <!-- test apple -->
+          <g data-step="5">
+            <rect x="22" y="222" width="320" height="34" rx="6" fill="#E8F1DE" stroke="#3C7B2C"/>
+            <text x="34" y="244" font-size="11.5" font-weight="700" fill="#2C5D20">may_contain("apple")? → check 3, 9, 14</text>
+          </g>
+          <text data-step="6" x="360" y="244" font-size="11.5" font-weight="700" fill="#2C5D20">all 1 → MAYBE here → worth a real lookup</text>
+        </svg>
+      </div>
+      <ol class="steplist">
+        <li data-step="1"><span class="sn">1</span><span>add("apple") hashes the key three ways and sets bits 3, 9 and 14.</span></li>
+        <li data-step="2"><span class="sn">2</span><span>add("mango") sets bits 6, 9 and 11 — bit 9 was already set, and that is fine.</span></li>
+        <li data-step="3"><span class="sn">3</span><span>Now test "grape": hash it the same ways to check bits 2, 9 and 15.</span></li>
+        <li data-step="4"><span class="sn">4</span><span>Bit 2 is still 0 — so "grape" is DEFINITELY NOT here. Skip this whole table, no disk access.</span></li>
+        <li data-step="5"><span class="sn">5</span><span>Test "apple": check bits 3, 9 and 14.</span></li>
+        <li data-step="6"><span class="sn">6</span><span>All three are 1 — so "apple" is MAYBE present, and is worth a real lookup.</span></li>
+      </ol>
+      <div class="legend">
+        <span><i style="background:#6FB23F"></i> bit set to 1</span>
+        <span><i style="background:#fff;border:1px solid #C3CFB6"></i> bit still 0</span>
+        <span><i style="background:#F6E2E1;border:1px solid #AE3F3C"></i> a definite "no"</span>
+      </div>
+      <figcaption class="plate__cap">A single 0-bit is a certain "absent". That's why bloom filters slash <em>read amplification</em>: a key that lives in only one of ten tables is rejected by the other nine almost instantly, with no disk access.</figcaption>
+    </figure>
+
+    <p>KiwiDB sizes each filter from two numbers — <code>n</code> (expected keys) and <code>fpr</code> (target false-positive rate, default 1%) — using the standard formulas:</p>
+    <pre><code><span class="c"># bits needed and number of hash functions (optimal)</span>
+m = -n · ln(fpr) / (ln 2)²      <span class="c"># bit-array size</span>
+k = (m / n) · ln 2              <span class="c"># how many hashes per key</span></code></pre>
+    <p>For example, 1,000,000 keys at 1% gives about 9.6 million bits (~1.2&nbsp;MB) and 7 hash functions. The hashes come from <code>mmh3</code> (MurmurHash3 — fast and well-spread); each bit is set with simple byte arithmetic (<code>bits[i&gt;&gt;3] |= 1 &lt;&lt; (i&amp;7)</code>).</p>
+    <div class="callout callout--exam">
+      <div class="callout__label">★ If the examiner asks…</div>
+      <p>"Can a bloom filter ever say a key is present when it isn't?" → <strong>Yes</strong> — that's a false positive, and it only costs a wasted lookup. "Can it ever say absent when the key is present?" → <strong>Never.</strong> No false negatives. That asymmetry is the entire reason it's safe to use as a read filter.</p>
+    </div>
+
+    <!-- 3.6 SPARSE INDEX -->
+    <h3>3.6 · The sparse index — jump near the key, not to it</h3>
+    <p><span class="chip chip--disk"><span class="dot" style="background:var(--disk)"></span>per SSTable</span> &nbsp;<code>app/index/sparse.py</code></p>
+    <p>Once the bloom filter says "maybe", the reader needs to find <em>where</em> in the big data file the key sits. A <strong>dense</strong> index (one entry per key) would be huge — as big as the data itself. Instead KiwiDB keeps a <strong>sparse</strong> index: just the <em>first key of each block</em> and that block's byte offset.</p>
+    <p>To find a key, a binary search (<code>bisect</code>) finds the largest first-key that is ≤ your key — that's the one block that <em>could</em> contain it. The reader then scans only that single ~4&nbsp;KB block. So a tiny index (one entry per block, not per record) narrows millions of records down to one block.</p>
+    <div class="nbl">
+      <div class="need"><h5>Need</h5><p>Find a key's block without an index as large as the data.</p></div>
+      <div class="benefit"><h5>Benefit</h5><p>Index size is O(number of blocks), not O(number of records) — small enough to cache entirely in memory.</p></div>
+      <div class="limit"><h5>Cost</h5><p>You scan one whole block instead of jumping to the exact record — a cheap, bounded price.</p></div>
+    </div>
+
+    <!-- 3.7 BLOCK CACHE -->
+    <h3>3.7 · The three-tier block cache</h3>
+    <p><span class="chip chip--mem"><span class="dot" style="background:var(--kiwi)"></span>in memory</span> &nbsp;<code>app/cache/block.py</code></p>
+    <p>Reading from disk is slow, so KiwiDB keeps recently-used pieces in RAM using an <strong>LRU</strong> (least-recently-used) cache. The twist: it's <em>three</em> independent caches, one each for <strong>data blocks</strong>, <strong>sparse indexes</strong>, and <strong>bloom filters</strong>.</p>
+    <div class="callout callout--why">
+      <div class="callout__label">◆ Why three caches instead of one?</div>
+      <p>Bloom filters and indexes are tiny and used on <em>every</em> lookup; data blocks are large and used less evenly. If they shared one cache, a flood of big data blocks could evict the small, precious filters. Separate caches with separate size limits mean each tier protects its own — a clean example of designing for the access pattern.</p>
+    </div>
+    <p>(Implementation detail worth knowing: the filter and index are stored under reserved "sentinel" cache keys, −1 and −2, so they never collide with real block offsets, which are always ≥ 0. When compaction deletes a file, its entries are flushed from all three caches.)</p>
+
+    <!-- 3.8 K-WAY MERGE -->
+    <h3>3.8 · The k-way merge iterator — the heart of compaction</h3>
+    <p><code>app/common/merge_iterator.py</code></p>
+    <p>Compaction must merge several already-sorted SSTables into one sorted stream. That's the classic <strong>k-way merge</strong>: keep the current smallest record from each input in a <strong>min-heap</strong>, repeatedly pop the global smallest, and refill from whichever input it came from. Merging M records across N inputs costs O(M log N).</p>
+    <p>Two rules run during the merge and are pure exam gold:</p>
+    <ul>
+      <li><strong>Deduplication by version.</strong> The heap orders equal keys so the <em>highest sequence number</em> comes out first. The merge emits that newest version and skips the older duplicates of the same key.</li>
+      <li><strong>Tombstone garbage collection.</strong> A delete-marker (tombstone) must linger long enough to shadow the value in deeper levels. So a tombstone is <em>dropped</em> only once its sequence number is below a <code>seq_cutoff</code> (meaning no older data could still need shadowing); above the cutoff it is <em>kept</em>.</li>
+    </ul>
+
+    <!-- 3.9 SUPPORTING -->
+    <h3>3.9 · The supporting cast: versions, IDs and locks</h3>
+    <div class="grid3">
+      <div class="card"><h4>Sequence numbers (MVCC)</h4><p>Every write gets a monotonically increasing <strong>sequence number</strong>. Newer = higher. This is how KiwiDB knows which of two copies of a key is the live one — <em>highest seq wins</em>. It's a lightweight form of <abbr title="Multi-Version Concurrency Control">MVCC</abbr>: old versions coexist until compaction removes them.</p></div>
+      <div class="card"><h4>UUIDv7 file IDs</h4><p>SSTable folders are named with <strong>UUIDv7</strong>, which embeds a millisecond timestamp in its high bits. Sorting the IDs alphabetically therefore sorts them by <em>creation time</em> — handy for recovery and for finding the newest L0 tables, with no extra bookkeeping.</p></div>
+      <div class="card"><h4>Async reader-writer lock</h4><p>For state that's read often and changed rarely (like the set of live SSTables), an <strong>AsyncRWLock</strong> lets many readers run together but gives a writer exclusive access. It uses <em>writer preference</em> so a steady stream of readers can't starve a waiting writer.</p></div>
+    </div>
+    <div class="callout callout--exam">
+      <div class="callout__label">★ If the examiner asks…</div>
+      <p>"How does KiwiDB handle two writes to the same key?" → Both are stored, each with its own sequence number; reads return the one with the <strong>highest</strong> seq; compaction later discards the loser. Nothing is ever overwritten in place — consistent with the append-only philosophy.</p>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- ====================== 04 OPERATION FLOWS ====================== -->
+  <section class="sec" id="flows">
+    <div class="sec-head">
+      <div class="sec-num">04</div>
+      <h2>Operation flows — what actually happens</h2>
+    </div>
+    <p>Now we trace the four operations end-to-end. If you can narrate these out loud, you can explain the whole project. Step through each figure with <strong>Next ▶</strong> and read the highlighted step as you go.</p>
+
+    <!-- WRITE -->
+    <h3>4.1 · Writing a key (<code>put</code>)</h3>
+    <figure class="plate" data-stepper id="fig-write">
+      <div class="plate__bar">
+        <div class="plate__title"><span class="fignum">Fig 4.1</span>The write path</div>
+        <div class="stepper"><button class="step-btn" data-act="prev" aria-label="Previous step">◀ Prev</button><span class="step-count">step <b class="cur">0</b>/<span class="tot">0</span></span><button class="step-btn step-btn--primary" data-act="next" aria-label="Next step">Next ▶</button><button class="step-btn" data-act="reset" aria-label="Reset to start">Reset</button><button class="step-btn" data-act="all" aria-label="Show all steps">Show all</button></div>
+      </div>
+      <div class="plate__body plate__scroll">
+        <svg viewBox="0 0 720 210" role="img" aria-label="Write path: assign a sequence number, append to the WAL on disk, insert into the memtable in memory, acknowledge to the user, and freeze the memtable if it is full.">
+          <defs><marker id="ahw" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="#48564C"/></marker></defs>
+          <g text-anchor="middle" font-size="11">
+            <g data-step="1"><circle cx="60" cy="44" r="26" fill="#16201A"/><text x="60" y="42" fill="#dfeccf" font-weight="700">put</text><text x="60" y="56" fill="#9fb89a" font-size="9">(k, v)</text></g>
+
+            <g data-step="2"><rect x="118" y="22" width="118" height="44" rx="9" fill="#fff" stroke="#C3CFB6"/><text x="177" y="40" font-weight="700" fill="#16201A">1. assign seq #</text><text x="177" y="55" font-size="9.5" fill="#7C8A7E">next version number</text></g>
+
+            <g data-step="3"><rect x="262" y="22" width="130" height="44" rx="9" fill="#E1ECF4" stroke="#2C5E8C"/><text x="327" y="40" font-weight="700" fill="#2C5E8C">2. append to WAL</text><text x="327" y="55" font-size="9.5" fill="#345a7a">on disk — now safe</text></g>
+
+            <g data-step="4"><rect x="418" y="22" width="140" height="44" rx="9" fill="#E8F1DE" stroke="#3C7B2C"/><text x="488" y="40" font-weight="700" fill="#2C5D20">3. insert in memtable</text><text x="488" y="55" font-size="9.5" fill="#3c5a30">skip-list, in memory</text></g>
+
+            <g data-step="5"><circle cx="640" cy="44" r="26" fill="#3C7B2C"/><text x="640" y="42" fill="#fff" font-weight="700">4. ack</text><text x="640" y="56" fill="#dCe9c9" font-size="9">done!</text></g>
+          </g>
+          <!-- connectors -->
+          <g stroke="#48564C" stroke-width="1.6" fill="none">
+            <line data-step="1" x1="86" y1="44" x2="116" y2="44" marker-end="url(#ahw)"/>
+            <line data-step="3" x1="236" y1="44" x2="260" y2="44" marker-end="url(#ahw)"/>
+            <line data-step="4" x1="392" y1="44" x2="416" y2="44" marker-end="url(#ahw)"/>
+            <line data-step="5" x1="558" y1="44" x2="612" y2="44" marker-end="url(#ahw)"/>
+          </g>
+          <!-- durability marker -->
+          <g data-step="3"><line x1="327" y1="66" x2="327" y2="92" stroke="#2C5E8C" stroke-width="1.3" stroke-dasharray="3 3"/><text x="327" y="106" text-anchor="middle" font-size="9.5" font-weight="700" fill="#2C5E8C">↑ after this point, a crash cannot lose the write</text></g>
+
+          <!-- freeze branch -->
+          <g data-step="6">
+            <path stroke-dasharray="6 6" d="M488 66 V128" stroke="#3C7B2C" stroke-width="1.8" fill="none" marker-end="url(#ahw)"/>
+            <rect x="360" y="130" width="256" height="56" rx="9" fill="#F6EBD4" stroke="#C2811B"/>
+            <text x="488" y="151" text-anchor="middle" font-size="11" font-weight="700" fill="#9a6711">5. memtable full?  →  FREEZE it</text>
+            <text x="488" y="168" text-anchor="middle" font-size="9.5" fill="#9a6711">snapshot → push to flush queue → start a fresh active table</text>
+            <text x="488" y="180" text-anchor="middle" font-size="9.5" fill="#9a6711">(the user already got their ack — this is off the critical path)</text>
+          </g>
+        </svg>
+      </div>
+      <ol class="steplist">
+        <li data-step="1"><span class="sn">1</span><span>A put(key, value) request arrives.</span></li>
+        <li data-step="2"><span class="sn">2</span><span>The engine assigns the next sequence number.</span></li>
+        <li data-step="3"><span class="sn">3</span><span>The record is appended to the WAL on disk — past this point a crash can no longer lose it.</span></li>
+        <li data-step="4"><span class="sn">4</span><span>It is inserted into the in-memory memtable (a quick write-lock on the skip list).</span></li>
+        <li data-step="5"><span class="sn">5</span><span>The write is acknowledged to the caller — typically sub-millisecond.</span></li>
+        <li data-step="6"><span class="sn">6</span><span>If the memtable is now full, it is frozen and queued for flushing — off the critical path.</span></li>
+      </ol>
+      <figcaption class="plate__cap">Steps 1–4 are all the user waits for, and they only touch RAM and a sequential log append — that's why writes are fast. Step 5 happens only when the table is full, and the freeze is instant (a fresh table is swapped in); the actual disk write is handled later by the flush pipeline.</figcaption>
+    </figure>
+    <ol>
+      <li><strong>Assign a sequence number.</strong> The engine stamps the write with the next monotonic seq, fixing its version.</li>
+      <li><strong>Append to the WAL.</strong> The record is written to the on-disk log first. <em>This is the durability point</em> — survive past here and a crash can't lose the write.</li>
+      <li><strong>Insert into the active memtable</strong> under a short write-lock on the skip list.</li>
+      <li><strong>Acknowledge</strong> to the caller. Done — typically sub-millisecond.</li>
+      <li><strong>Maybe freeze.</strong> If the memtable is now over its threshold, it's frozen and queued for flushing while a new empty one takes over.</li>
+    </ol>
+
+    <!-- READ -->
+    <h3>4.2 · Reading a key (<code>get</code>)</h3>
+    <p>Reads are the harder direction in an LSM tree — a key could be in the memtable or in any level — so KiwiDB checks <strong>newest to oldest</strong> and stops at the first hit (which, by construction, is the live version).</p>
+    <figure class="plate" data-stepper id="fig-read">
+      <div class="plate__bar">
+        <div class="plate__title"><span class="fignum">Fig 4.2</span>The read path — newest source wins</div>
+        <div class="stepper"><button class="step-btn" data-act="prev" aria-label="Previous step">◀ Prev</button><span class="step-count">step <b class="cur">0</b>/<span class="tot">0</span></span><button class="step-btn step-btn--primary" data-act="next" aria-label="Next step">Next ▶</button><button class="step-btn" data-act="reset" aria-label="Reset to start">Reset</button><button class="step-btn" data-act="all" aria-label="Show all steps">Show all</button></div>
+      </div>
+      <div class="plate__body plate__scroll">
+        <svg viewBox="0 0 720 300" role="img" aria-label="Read path: check the memtable first; if missing, check each level. For each SSTable, the bloom filter rejects most tables instantly; on a maybe, the sparse index finds the block, the cache or disk supplies it, and the block is scanned.">
+          <defs><marker id="ahr" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="#48564C"/></marker></defs>
+          <!-- start -->
+          <g data-step="1" text-anchor="middle"><circle cx="64" cy="40" r="28" fill="#16201A"/><text x="64" y="38" fill="#dfeccf" font-weight="700" font-size="12">get(k)</text><text x="64" y="53" fill="#9fb89a" font-size="9">find it</text></g>
+
+          <!-- memtable -->
+          <g data-step="2"><rect x="120" y="16" width="170" height="48" rx="9" fill="#E8F1DE" stroke="#3C7B2C"/><text x="205" y="36" text-anchor="middle" font-size="11.5" font-weight="700" fill="#2C5D20">1 · MemTable (memory)</text><text x="205" y="52" text-anchor="middle" font-size="9.5" fill="#3c5a30">active + frozen queue, newest first</text></g>
+          <line data-step="2" x1="92" y1="40" x2="118" y2="40" stroke="#48564C" stroke-width="1.6" marker-end="url(#ahr)"/>
+          <text data-step="2" x="320" y="34" font-size="10" font-weight="700" fill="#3C7B2C">hit → return ✓</text>
+          <line data-step="2" x1="205" y1="64" x2="205" y2="92" stroke="#48564C" stroke-width="1.6" marker-end="url(#ahr)"/>
+          <text data-step="2" x="232" y="84" font-size="10" fill="#7C8A7E">miss ↓</text>
+
+          <!-- per-SSTable probe row -->
+          <text data-step="3" x="205" y="108" text-anchor="middle" font-size="10.5" font-weight="700" fill="#7C8A7E">for each SSTable (L0 newest-first, then L1→L3):</text>
+          <g text-anchor="middle" font-size="10.5">
+            <g data-step="3"><rect x="40" y="120" width="120" height="50" rx="9" fill="#fff" stroke="#9cc1de"/><text x="100" y="140" font-weight="700" fill="#2C5E8C">2 · Bloom</text><text x="100" y="156" font-size="9" fill="#345a7a">"could it be here?"</text></g>
+            <g data-step="5"><rect x="190" y="120" width="120" height="50" rx="9" fill="#fff" stroke="#9cc1de"/><text x="250" y="140" font-weight="700" fill="#2C5E8C">3 · Sparse index</text><text x="250" y="156" font-size="9" fill="#345a7a">which block?</text></g>
+            <g data-step="6"><rect x="340" y="120" width="120" height="50" rx="9" fill="#fff" stroke="#9cc1de"/><text x="400" y="138" font-weight="700" fill="#2C5E8C">4 · Cache / mmap</text><text x="400" y="155" font-size="9" fill="#345a7a">fetch the block</text></g>
+            <g data-step="7"><rect x="490" y="120" width="120" height="50" rx="9" fill="#EaF1F7" stroke="#2C5E8C"/><text x="550" y="138" font-weight="700" fill="#2C5E8C">5 · Scan block</text><text x="550" y="155" font-size="9" fill="#345a7a">find the record</text></g>
+          </g>
+          <g stroke="#48564C" stroke-width="1.5" fill="none">
+            <line data-step="5" x1="160" y1="145" x2="188" y2="145" marker-end="url(#ahr)"/>
+            <line data-step="6" x1="310" y1="145" x2="338" y2="145" marker-end="url(#ahr)"/>
+            <line data-step="7" x1="460" y1="145" x2="488" y2="145" marker-end="url(#ahr)"/>
+          </g>
+          <!-- bloom reject shortcut -->
+          <g data-step="4">
+            <path d="M100 170 C100 210 360 210 540 196" stroke="#AE3F3C" stroke-width="1.6" fill="none" stroke-dasharray="5 4" marker-end="url(#ahr)"/>
+            <rect x="250" y="196" width="220" height="26" rx="6" fill="#F6E2E1" stroke="#AE3F3C"/>
+            <text x="360" y="213" text-anchor="middle" font-size="10" font-weight="700" fill="#AE3F3C">bloom says "no" → skip this whole table</text>
+          </g>
+          <!-- result -->
+          <g data-step="7"><rect x="430" y="244" width="260" height="44" rx="9" fill="#E8F1DE" stroke="#3C7B2C"/><text x="560" y="264" text-anchor="middle" font-size="11" font-weight="700" fill="#2C5D20">return the highest-seq match found</text><text x="560" y="279" text-anchor="middle" font-size="9.5" fill="#3c5a30">(a tombstone → report "not found")</text></g>
+          <line data-step="7" x1="550" y1="170" x2="550" y2="242" stroke="#48564C" stroke-width="1.6" marker-end="url(#ahr)"/>
+          <text data-step="7" x="100" y="266" font-size="10" fill="#7C8A7E">not in this table?<tspan x="100" dy="13">→ try the next, older one</tspan></text>
+        </svg>
+      </div>
+      <ol class="steplist">
+        <li data-step="1"><span class="sn">1</span><span>A read for key k begins.</span></li>
+        <li data-step="2"><span class="sn">2</span><span>Check the memtable first — the active table, then the frozen queue, newest first. A hit returns straight away.</span></li>
+        <li data-step="3"><span class="sn">3</span><span>On a miss, walk the SSTables (L0 newest-first, then L1 to L3). For each, ask its bloom filter first.</span></li>
+        <li data-step="4"><span class="sn">4</span><span>If the bloom says 'no', skip the entire table with no disk access — the big read-amplification saver.</span></li>
+        <li data-step="5"><span class="sn">5</span><span>If it says 'maybe', the sparse index pinpoints the one block that could hold the key.</span></li>
+        <li data-step="6"><span class="sn">6</span><span>Fetch that block from the cache, or via mmap from disk on a miss.</span></li>
+        <li data-step="7"><span class="sn">7</span><span>Scan the block and return the highest-seq match — a tombstone reads as 'not found'.</span></li>
+      </ol>
+      <div class="legend">
+        <span><i style="background:#E8F1DE;border:1px solid #3C7B2C"></i> memory / found</span>
+        <span><i style="background:#EaF1F7;border:1px solid #2C5E8C"></i> disk work</span>
+        <span><i style="background:#F6E2E1;border:1px solid #AE3F3C"></i> the fast "no"</span>
+      </div>
+      <figcaption class="plate__cap">The bloom filter (step 2) is the hero of the read path: it lets KiwiDB skip almost every table without any disk access. Only on a "maybe" does it pay for the index lookup, block fetch and scan. Because sources are checked newest-first and the first hit wins, you always read the current value — and a tombstone correctly reads as "not found".</figcaption>
+    </figure>
+
+    <h3>4.3 · Deleting a key — the tombstone</h3>
+    <p>You can't erase a key from an immutable file, so a delete is just a special write: a record whose value is a <strong>tombstone</strong> marker, stamped with a fresh (higher) sequence number. On read, that newer tombstone shadows any older value — the key reads as "not found". The dead value and, eventually, the tombstone itself are physically removed later, during compaction.</p>
+    <div class="callout callout--exam">
+      <div class="callout__label">★ If the examiner asks…</div>
+      <p>"Why keep a tombstone at all — why not just drop the key?" → Because the old value still exists in deeper levels. The tombstone must survive long enough to <em>shadow</em> those copies during reads and merges. Only when compaction is certain no older copy remains (seq below the cutoff) is the tombstone itself discarded.</p>
+    </div>
+  </section>
+
+  <hr>
+
+  <section class="sec" id="flows-2" style="padding-top:8px">
+    <!-- FLUSH -->
+    <h3>4.4 · Flushing — parallel writes, ordered commits</h3>
+    <p>When frozen memtables pile up, the <strong>flush pipeline</strong> writes them to L0 SSTables. It wants two things that seem to conflict: <em>speed</em> (write several tables at once) and <em>correctness</em> (the on-disk order of versions must match the order they were written). KiwiDB's answer is a clean two-phase design.</p>
+    <figure class="plate" data-stepper id="fig-flush">
+      <div class="plate__bar">
+        <div class="plate__title"><span class="fignum">Fig 4.3</span>The flush pipeline: write in parallel, commit in order</div>
+        <div class="stepper"><button class="step-btn" data-act="prev" aria-label="Previous step">◀ Prev</button><span class="step-count">step <b class="cur">0</b>/<span class="tot">0</span></span><button class="step-btn step-btn--primary" data-act="next" aria-label="Next step">Next ▶</button><button class="step-btn" data-act="reset" aria-label="Reset to start">Reset</button><button class="step-btn" data-act="all" aria-label="Show all steps">Show all</button></div>
+      </div>
+      <div class="plate__body plate__scroll">
+        <svg viewBox="0 0 720 250" role="img" aria-label="Three flush slots. In phase one their SSTable writes overlap in time, bounded by a semaphore. In phase two each slot commits only after the previous slot has committed, passing a baton in order.">
+          <defs><marker id="ahf" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="#C2811B"/></marker></defs>
+          <!-- phase labels -->
+          <g data-step="0">
+            <rect x="120" y="14" width="300" height="22" rx="5" fill="#F6EBD4" stroke="#C2811B"/><text x="270" y="29" text-anchor="middle" font-size="10.5" font-weight="700" fill="#9a6711">PHASE 1 · writes run in parallel</text>
+            <rect x="436" y="14" width="262" height="22" rx="5" fill="#E8F1DE" stroke="#3C7B2C"/><text x="567" y="29" text-anchor="middle" font-size="10.5" font-weight="700" fill="#2C5D20">PHASE 2 · commits in strict order</text>
+          </g>
+          <!-- time axis -->
+          <line x1="120" y1="48" x2="120" y2="220" stroke="#C3CFB6" stroke-dasharray="3 3"/>
+          <line x1="430" y1="48" x2="430" y2="220" stroke="#C3CFB6" stroke-dasharray="3 3"/>
+          <text x="60" y="60" font-size="10" font-weight="700" fill="#7C8A7E">time →</text>
+          <!-- lane labels -->
+          <g font-size="10.5" font-weight="700" fill="#48564C">
+            <text x="20" y="84">slot 0</text><text x="20" y="134">slot 1</text><text x="20" y="184">slot 2</text>
+          </g>
+          <!-- write bars (amber, overlapping) -->
+          <g>
+            <rect data-step="1" x="120" y="68" width="180" height="28" rx="6" fill="#F6EBD4" stroke="#C2811B"/><text data-step="1" x="210" y="86" text-anchor="middle" font-size="10" font-weight="700" fill="#9a6711">write SSTable</text>
+            <rect data-step="1" x="120" y="118" width="230" height="28" rx="6" fill="#F6EBD4" stroke="#C2811B"/><text data-step="1" x="235" y="136" text-anchor="middle" font-size="10" font-weight="700" fill="#9a6711">write SSTable</text>
+            <rect data-step="1" x="120" y="168" width="150" height="28" rx="6" fill="#F6EBD4" stroke="#C2811B"/><text data-step="1" x="195" y="186" text-anchor="middle" font-size="10" font-weight="700" fill="#9a6711">write</text>
+          </g>
+          <!-- commit bars (green, serialized) -->
+          <g>
+            <rect data-step="2" x="436" y="68" width="70" height="28" rx="6" fill="#E8F1DE" stroke="#3C7B2C"/><text data-step="2" x="471" y="86" text-anchor="middle" font-size="10" font-weight="700" fill="#2C5D20">commit</text>
+            <rect data-step="3" x="516" y="118" width="70" height="28" rx="6" fill="#E8F1DE" stroke="#3C7B2C"/><text data-step="3" x="551" y="136" text-anchor="middle" font-size="10" font-weight="700" fill="#2C5D20">commit</text>
+            <rect data-step="4" x="596" y="168" width="70" height="28" rx="6" fill="#E8F1DE" stroke="#3C7B2C"/><text data-step="4" x="631" y="186" text-anchor="middle" font-size="10" font-weight="700" fill="#2C5D20">commit</text>
+          </g>
+          <!-- baton arrows -->
+          <path data-step="3" d="M471 96 C471 112 516 112 516 116" stroke="#C2811B" stroke-width="2" fill="none" marker-end="url(#ahf)"/>
+          <path data-step="4" d="M551 146 C551 162 596 162 596 166" stroke="#C2811B" stroke-width="2" fill="none" marker-end="url(#ahf)"/>
+          <text data-step="3" x="500" y="232" text-anchor="middle" font-size="10" fill="#7C8A7E">each commit waits for the previous one — the "event chain" baton</text>
+        </svg>
+      </div>
+      <ol class="steplist">
+        <li data-step="1"><span class="sn">1</span><span>Phase 1: all three slots write their SSTables in parallel, capped by a semaphore.</span></li>
+        <li data-step="2"><span class="sn">2</span><span>Phase 2: slot 0 commits first — making its table visible and dropping its WAL entries.</span></li>
+        <li data-step="3"><span class="sn">3</span><span>Slot 1 may only commit after slot 0 — the 'baton' is passed strictly in order.</span></li>
+        <li data-step="4"><span class="sn">4</span><span>Slot 2 commits after slot 1. Writes overlapped, but commit order is guaranteed.</span></li>
+      </ol>
+      <figcaption class="plate__cap"><strong>Phase 1 (parallel):</strong> several slots write their SSTables at the same time, capped by a semaphore so the disk isn't overwhelmed. <strong>Phase 2 (serialized):</strong> a slot may only <em>commit</em> (make its table visible and drop its WAL entries) after the slot before it has committed — enforced by an event each slot waits on, then sets. If any write fails, a shared "abort" flag tells the downstream slots to skip, and the baton is always passed so the chain can never deadlock.</figcaption>
+    </figure>
+    <div class="callout callout--why">
+      <div class="callout__label">◆ Why bother ordering the commits?</div>
+      <p>Two flushed tables might contain different versions of the same key. If they became visible out of order, a reader could momentarily see an <em>older</em> value win. Serializing the commit step guarantees on-disk visibility follows write order — correctness — while still getting the speed of parallel writes. It's "parallelism where it's safe, ordering where it matters".</p>
+    </div>
+
+    <!-- COMPACTION -->
+    <h3>4.5 · Compaction — the background tidy-up</h3>
+    <p>Compaction merges overlapping/old SSTables into fewer, tidier ones a level down. It's triggered after flushes when a level has too many files (L0) or grows too big (L1+). The merge itself is the k-way merge from §3.8, and it does the real cleanup: dropping superseded versions and expired tombstones.</p>
+    <figure class="plate" data-stepper id="fig-compact">
+      <div class="plate__bar">
+        <div class="plate__title"><span class="fignum">Fig 4.4</span>Merging two sorted tables into one clean table</div>
+        <div class="stepper"><button class="step-btn" data-act="prev" aria-label="Previous step">◀ Prev</button><span class="step-count">step <b class="cur">0</b>/<span class="tot">0</span></span><button class="step-btn step-btn--primary" data-act="next" aria-label="Next step">Next ▶</button><button class="step-btn" data-act="reset" aria-label="Reset to start">Reset</button><button class="step-btn" data-act="all" aria-label="Show all steps">Show all</button></div>
+      </div>
+      <div class="plate__body plate__scroll">
+        <svg viewBox="0 0 720 250" role="img" aria-label="Two sorted inputs are merged. For apple and cat, the newer version wins and the older is dropped. Dog is a tombstone below the cutoff and is garbage-collected. The output holds apple, bird and cat in sorted order.">
+          <defs><marker id="ahc" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="#48564C"/></marker></defs>
+          <!-- input A (L0) -->
+          <text data-step="1" x="90" y="28" text-anchor="middle" font-size="10.5" font-weight="700" fill="#2C5E8C">L0 input (newer)</text>
+          <g text-anchor="middle" font-size="11" font-weight="700">
+            <g data-step="1"><rect x="30" y="40" width="120" height="26" rx="5" fill="#EaF1F7" stroke="#2C5E8C"/><text x="90" y="58" fill="#2C5E8C">apple · seq 5</text></g>
+            <g data-step="1"><rect x="30" y="72" width="120" height="26" rx="5" fill="#EaF1F7" stroke="#2C5E8C"/><text x="90" y="90" fill="#2C5E8C">cat · seq 6</text></g>
+            <g data-step="1"><rect x="30" y="104" width="120" height="26" rx="5" fill="#F6E2E1" stroke="#AE3F3C"/><text x="90" y="122" fill="#AE3F3C">dog · seq 7 ✗tomb</text></g>
+          </g>
+          <!-- input B (L1) -->
+          <text data-step="1" x="90" y="156" text-anchor="middle" font-size="10.5" font-weight="700" fill="#2C5E8C">L1 input (older)</text>
+          <g text-anchor="middle" font-size="11" font-weight="700">
+            <g data-step="1"><rect x="30" y="166" width="120" height="26" rx="5" fill="#dCe9f3" stroke="#9cc1de"/><text x="90" y="184" fill="#345a7a">apple · seq 2</text></g>
+            <g data-step="1"><rect x="30" y="198" width="120" height="26" rx="5" fill="#dCe9f3" stroke="#9cc1de"/><text x="90" y="216" fill="#345a7a">bird · seq 3</text></g>
+          </g>
+          <!-- heap / merge -->
+          <g data-step="2"><circle cx="320" cy="130" r="48" fill="#16201A"/><text x="320" y="126" text-anchor="middle" font-size="11.5" font-weight="700" fill="#dfeccf">min-heap</text><text x="320" y="142" text-anchor="middle" font-size="9.5" fill="#9fb89a">k-way merge</text></g>
+          <g stroke="#48564C" stroke-width="1.5" fill="none">
+            <line data-step="2" x1="152" y1="53" x2="275" y2="115" marker-end="url(#ahc)"/>
+            <line data-step="2" x1="152" y1="179" x2="275" y2="146" marker-end="url(#ahc)"/>
+          </g>
+          <!-- output -->
+          <text data-step="3" x="600" y="40" text-anchor="middle" font-size="10.5" font-weight="700" fill="#2C5D20">clean output → L1</text>
+          <g text-anchor="middle" font-size="11" font-weight="700">
+            <g data-step="3"><rect x="540" y="52" width="120" height="26" rx="5" fill="#E8F1DE" stroke="#3C7B2C"/><text x="600" y="70" fill="#2C5D20">apple · seq 5</text></g>
+            <g data-step="3"><rect x="540" y="84" width="120" height="26" rx="5" fill="#E8F1DE" stroke="#3C7B2C"/><text x="600" y="102" fill="#2C5D20">bird · seq 3</text></g>
+            <g data-step="3"><rect x="540" y="116" width="120" height="26" rx="5" fill="#E8F1DE" stroke="#3C7B2C"/><text x="600" y="134" fill="#2C5D20">cat · seq 6</text></g>
+          </g>
+          <line data-step="3" x1="368" y1="120" x2="538" y2="90" stroke="#48564C" stroke-width="1.5" marker-end="url(#ahc)"/>
+          <!-- dropped notes -->
+          <g data-step="4" font-size="9.5" fill="#AE3F3C" font-weight="700">
+            <text x="600" y="170" text-anchor="middle">dropped: apple seq 2 &amp; cat seq 1 (older dups)</text>
+            <text x="600" y="186" text-anchor="middle">dropped: dog tombstone (GC'd below cutoff)</text>
+          </g>
+        </svg>
+      </div>
+      <ol class="steplist">
+        <li data-step="1"><span class="sn">1</span><span>Two sorted inputs: the newer L0 table and the older L1 table.</span></li>
+        <li data-step="2"><span class="sn">2</span><span>Both feed into a k-way merge driven by a min-heap.</span></li>
+        <li data-step="3"><span class="sn">3</span><span>For each key the heap surfaces the newest version; the clean output goes to L1: apple (seq 5), bird (seq 3), cat (seq 6).</span></li>
+        <li data-step="4"><span class="sn">4</span><span>Dropped along the way: the older duplicates of apple and cat, and the dog tombstone — garbage-collected below the cutoff.</span></li>
+      </ol>
+      <figcaption class="plate__cap">For each key the heap surfaces the newest version first; older duplicates are skipped. The <code>dog</code> tombstone is below the garbage-collection cutoff, so it's removed entirely. The result is one smaller, fully-sorted L1 table — reads now touch fewer files, and dead bytes are reclaimed.</figcaption>
+    </figure>
+    <p>While the merge runs, the old input tables stay readable (a reference count keeps them alive until in-flight reads finish). When the new table is ready, the engine <strong>atomically</strong> swaps it in, marks the inputs for deletion, and clears their cache entries. Crucially, the heavy merge runs in a <em>separate process</em> — the subject of the next section.</p>
+
+    <!-- RECOVERY -->
+    <h3>4.6 · Crash recovery — picking up exactly where it left off</h3>
+    <p>On startup, KiwiDB reconstructs the in-memory state that a crash erased, using the durable pieces on disk:</p>
+    <figure class="plate" data-stepper id="fig-recovery">
+      <div class="plate__bar">
+        <div class="plate__title"><span class="fignum">Fig 4.5</span>Recovery sequence</div>
+        <div class="stepper"><button class="step-btn" data-act="prev" aria-label="Previous step">◀ Prev</button><span class="step-count">step <b class="cur">0</b>/<span class="tot">0</span></span><button class="step-btn step-btn--primary" data-act="next" aria-label="Next step">Next ▶</button><button class="step-btn" data-act="reset" aria-label="Reset to start">Reset</button><button class="step-btn" data-act="all" aria-label="Show all steps">Show all</button></div>
+      </div>
+      <div class="plate__body plate__scroll">
+        <svg viewBox="0 0 720 130" role="img" aria-label="Recovery: restore the sequence counter from the highest sequence on disk, replay the WAL, skip entries already flushed to SSTables, and restore the rest into a fresh memtable.">
+          <defs><marker id="ahrec" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="#48564C"/></marker></defs>
+          <g text-anchor="middle" font-size="10.5" font-weight="700">
+            <g data-step="1"><rect x="20" y="40" width="150" height="50" rx="9" fill="#EaF1F7" stroke="#2C5E8C"/><text x="95" y="60" fill="#2C5E8C">1 · read seq from</text><text x="95" y="76" fill="#2C5E8C">SSTables on disk</text></g>
+            <g data-step="2"><rect x="194" y="40" width="150" height="50" rx="9" fill="#E1ECF4" stroke="#2C5E8C"/><text x="269" y="60" fill="#2C5E8C">2 · replay the WAL</text><text x="269" y="76" font-size="9" fill="#345a7a" font-weight="400">verify CRC on each frame</text></g>
+            <g data-step="3"><rect x="368" y="40" width="160" height="50" rx="9" fill="#F6EBD4" stroke="#C2811B"/><text x="448" y="60" fill="#9a6711">3 · skip entries already</text><text x="448" y="76" fill="#9a6711">flushed (seq ≤ disk max)</text></g>
+            <g data-step="4"><rect x="552" y="40" width="150" height="50" rx="9" fill="#E8F1DE" stroke="#3C7B2C"/><text x="627" y="60" fill="#2C5D20">4 · load the rest into</text><text x="627" y="76" fill="#2C5D20">a fresh memtable</text></g>
+          </g>
+          <g stroke="#48564C" stroke-width="1.6" fill="none">
+            <line data-step="2" x1="170" y1="65" x2="192" y2="65" marker-end="url(#ahrec)"/>
+            <line data-step="3" x1="344" y1="65" x2="366" y2="65" marker-end="url(#ahrec)"/>
+            <line data-step="4" x1="528" y1="65" x2="550" y2="65" marker-end="url(#ahrec)"/>
+          </g>
+        </svg>
+      </div>
+      <ol class="steplist">
+        <li data-step="1"><span class="sn">1</span><span>Read the highest sequence number already safe in the SSTables on disk.</span></li>
+        <li data-step="2"><span class="sn">2</span><span>Replay the WAL frame by frame, verifying each CRC32.</span></li>
+        <li data-step="3"><span class="sn">3</span><span>Skip any entry already flushed — its sequence number is ≤ the on-disk maximum.</span></li>
+        <li data-step="4"><span class="sn">4</span><span>Load the remaining unflushed entries into a fresh memtable — back to the exact pre-crash state.</span></li>
+      </ol>
+      <figcaption class="plate__cap">Step 3 is the subtle one: some WAL entries were already safely flushed to SSTables before the crash, so replaying them again would be redundant. KiwiDB skips any entry whose sequence number is already covered on disk, and restores only the genuinely-unflushed writes — landing in exactly the state it had the instant before the crash.</figcaption>
+    </figure>
+    <div class="callout callout--exam">
+      <div class="callout__label">★ If the examiner asks…</div>
+      <p>"What guarantees you don't lose data on a crash?" → The WAL is written <em>before</em> the memtable, every frame is CRC-checked, SSTables only count as complete once <code>meta.json</code> is written last, and recovery replays the WAL while skipping already-flushed entries. Durability comes from <strong>ordering</strong> (log first) plus <strong>integrity checks</strong> (CRC) plus <strong>atomic completion markers</strong> (meta.json).</p>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- ====================== 05 PARALLELISM ====================== -->
+  <section class="sec" id="parallelism">
+    <div class="sec-head">
+      <div class="sec-num">05</div>
+      <h2>Parallel execution: process pools and the GIL</h2>
+    </div>
+    <p>This is one of the most distinctive engineering decisions in KiwiDB, and a classic viva topic for a Python project. To explain it you first need the GIL.</p>
+
+    <h3>What is the GIL, and why does it get in the way?</h3>
+    <p>CPython has a <strong>Global Interpreter Lock (GIL)</strong>: a single lock that lets only <em>one</em> thread run Python bytecode at a time, <em>per process</em>. So even on an 8-core CPU, eight Python threads doing heavy computation don't run truly in parallel — they take turns holding the one lock.</p>
+    <div class="callout callout--plain">
+      <div class="callout__label">▪ In plain words — the one-pen analogy</div>
+      <p>Imagine an office where everyone must share a single pen to write. It doesn't matter how many people (threads) you hire — only one can write at any instant. Threads are great when people spend most of their time <em>waiting</em> (for disk, network) and only occasionally need the pen. They're useless for getting more <em>writing</em> done in parallel. To truly write in parallel, you need more pens — that means more <strong>processes</strong>, each with its own GIL.</p>
+    </div>
+
+    <h3>Why compaction specifically needs a second process</h3>
+    <p>Most of KiwiDB's work is <strong>I/O-bound</strong> — waiting on disk — and <code>asyncio</code> handles that beautifully (more on that below). But <strong>compaction is CPU-bound</strong>: it decodes thousands of records, recomputes checksums, re-hashes keys into a new bloom filter, and runs the k-way merge. That's pure Python computation that <em>holds the GIL the whole time</em>. If it ran in the main process, it would freeze every other read and write for the duration.</p>
+    <p>So KiwiDB ships the merge off to a <strong>separate process</strong>, where it has its own interpreter and its own GIL, running on a different CPU core — while the main process keeps happily serving requests.</p>
+
+    <figure class="plate" data-stepper id="fig-gil">
+      <div class="plate__bar">
+        <div class="plate__title"><span class="fignum">Fig 5.1</span>Same work, two strategies</div>
+        <div class="stepper"><button class="step-btn" data-act="prev" aria-label="Previous step">◀ Prev</button><span class="step-count">step <b class="cur">0</b>/<span class="tot">0</span></span><button class="step-btn step-btn--primary" data-act="next" aria-label="Next step">Next ▶</button><button class="step-btn" data-act="reset" aria-label="Reset to start">Reset</button><button class="step-btn" data-act="all" aria-label="Show all steps">Show all</button></div>
+      </div>
+      <div class="plate__body plate__scroll">
+        <svg viewBox="0 0 720 250" role="img" aria-label="In one process, a CPU-heavy compaction holds the GIL and stalls request serving until it finishes. With compaction in a subprocess, the main process keeps serving requests while the subprocess merges on another core, finishing sooner.">
+          <!-- scenario A -->
+          <text data-step="1" x="20" y="26" font-size="11.5" font-weight="700" fill="#AE3F3C">✗ One process: compaction holds the GIL and blocks everything</text>
+          <text data-step="1" x="20" y="52" font-size="10" font-weight="700" fill="#48564C">main</text>
+          <g>
+            <rect data-step="1" x="70" y="40" width="120" height="24" rx="4" fill="#E8F1DE" stroke="#3C7B2C"/><text data-step="1" x="130" y="56" text-anchor="middle" font-size="9.5" fill="#2C5D20">serving reqs</text>
+            <rect data-step="2" x="190" y="40" width="300" height="24" rx="4" fill="#F6E2E1" stroke="#AE3F3C"/><text data-step="2" x="340" y="56" text-anchor="middle" font-size="9.5" font-weight="700" fill="#AE3F3C">COMPACTION (everyone else waits)</text>
+            <rect data-step="3" x="490" y="40" width="120" height="24" rx="4" fill="#E8F1DE" stroke="#3C7B2C"/><text data-step="3" x="550" y="56" text-anchor="middle" font-size="9.5" fill="#2C5D20">serving reqs</text>
+          </g>
+          <line data-step="3" x1="610" y1="34" x2="610" y2="78" stroke="#AE3F3C" stroke-width="1.5" stroke-dasharray="3 3"/>
+          <text data-step="3" x="610" y="92" text-anchor="middle" font-size="9.5" font-weight="700" fill="#AE3F3C">done (late)</text>
+
+          <!-- scenario B -->
+          <text data-step="4" x="20" y="138" font-size="11.5" font-weight="700" fill="#2C5D20">✓ Subprocess: main keeps serving; merge runs on another core</text>
+          <text data-step="4" x="20" y="164" font-size="10" font-weight="700" fill="#48564C">main</text>
+          <rect data-step="4" x="70" y="152" width="430" height="24" rx="4" fill="#E8F1DE" stroke="#3C7B2C"/><text data-step="4" x="285" y="168" text-anchor="middle" font-size="9.5" fill="#2C5D20">serving reqs — never blocked</text>
+          <text data-step="4" x="20" y="200" font-size="10" font-weight="700" fill="#48564C">sub-</text><text data-step="4" x="20" y="212" font-size="10" font-weight="700" fill="#48564C">process</text>
+          <rect data-step="5" x="70" y="190" width="300" height="24" rx="4" fill="#F6EBD4" stroke="#C2811B"/><text data-step="5" x="220" y="206" text-anchor="middle" font-size="9.5" font-weight="700" fill="#9a6711">COMPACTION (own core, own GIL)</text>
+          <line data-step="5" x1="370" y1="146" x2="370" y2="226" stroke="#3C7B2C" stroke-width="1.5" stroke-dasharray="3 3"/>
+          <text data-step="5" x="370" y="240" text-anchor="middle" font-size="9.5" font-weight="700" fill="#2C5D20">done sooner, nothing stalled</text>
+        </svg>
+      </div>
+      <ol class="steplist">
+        <li data-step="1"><span class="sn">1</span><span>One process: the main thread is happily serving reads and writes.</span></li>
+        <li data-step="2"><span class="sn">2</span><span>Then a CPU-heavy compaction grabs the GIL — and everything else is blocked until it finishes.</span></li>
+        <li data-step="3"><span class="sn">3</span><span>Only afterwards does serving resume; the whole thing finished late.</span></li>
+        <li data-step="4"><span class="sn">4</span><span>Better: run compaction in a separate process. The main process keeps serving the entire time.</span></li>
+        <li data-step="5"><span class="sn">5</span><span>The merge runs in the subprocess on its own core and GIL — done sooner, and nothing was ever stalled.</span></li>
+      </ol>
+      <div class="legend">
+        <span><i style="background:#E8F1DE;border:1px solid #3C7B2C"></i> serving reads/writes</span>
+        <span><i style="background:#F6EBD4;border:1px solid #C2811B"></i> compaction (CPU-heavy)</span>
+        <span><i style="background:#F6E2E1;border:1px solid #AE3F3C"></i> everything blocked</span>
+      </div>
+      <figcaption class="plate__cap">The win isn't only "compaction finishes faster" — it's that the database <strong>stays responsive</strong> the entire time. Reads and writes keep flowing on the main process while the merge grinds away in its own process on another core.</figcaption>
+    </figure>
+
+    <h3>How it's wired in code</h3>
+    <p>The compaction manager hands the merge to a <code>ProcessPoolExecutor</code>, and wraps that blocking call in <code>asyncio.to_thread</code> so the event loop itself never stalls waiting for it:</p>
+    <pre><code><span class="c"># app/engine/compaction_manager.py — run the merge off the main process</span>
+<span class="k">def</span> _run_in_subprocess(task):
+    <span class="k">with</span> ProcessPoolExecutor(max_workers=<span class="hl">1</span>) <span class="k">as</span> pool:
+        <span class="k">return</span> pool.submit(run_compaction, task).result()
+
+<span class="c"># called as:  await asyncio.to_thread(_run_in_subprocess, task)</span>
+<span class="c"># → event loop stays free; the merge runs in a child process</span></code></pre>
+
+    <div class="callout callout--why">
+      <div class="callout__label">◆ Why the task is "just data"</div>
+      <p>To send work to another process, Python must <strong>pickle</strong> (serialize) it and ship it across the process boundary. So the <code>CompactionTask</code> contains only primitive values — file IDs, directory paths, levels, a sequence cutoff. No open files, no locks, no live objects. The subprocess opens the files itself from those paths, does the merge, and returns just the metadata of the new table. Designing the task as plain, picklable data is what makes the whole scheme possible.</p>
+    </div>
+
+    <h3>Two kinds of "at the same time" — don't confuse them</h3>
+    <p>An examiner may probe whether you understand the difference. KiwiDB uses <em>both</em>, for different problems:</p>
+    <div class="grid2">
+      <div class="card card--mem">
+        <h4>asyncio concurrency (one core)</h4>
+        <p>For <strong>I/O-bound</strong> work — waiting on disk reads/writes. Many operations overlap their <em>waiting</em> on a single thread. The parallel SSTable writes in the flush pipeline use this. It does <em>not</em> beat the GIL for computation; it just stops you wasting time idle.</p>
+      </div>
+      <div class="card card--disk">
+        <h4>multiprocessing parallelism (many cores)</h4>
+        <p>For <strong>CPU-bound</strong> work — the compaction merge. A separate process means a separate GIL and a separate core, so computation truly runs in parallel with the main process.</p>
+      </div>
+    </div>
+    <p>KiwiDB even detects its environment at startup (<code>_detect_parallelism_mode</code>): on a future GIL-free Python build (3.13+ "free-threaded") it could use threads for the merge; on standard Python 3.12 it falls back to <strong>multiprocessing</strong>. The code is written to take advantage of whichever it's running on.</p>
+    <div class="callout callout--exam">
+      <div class="callout__label">★ If the examiner asks…</div>
+      <p>"Why not just use threads for compaction?" → Because compaction is CPU-bound, and the GIL means Python threads can't execute bytecode in parallel — they'd just take turns, giving no speed-up and still freezing the main loop. A separate process has its own interpreter and GIL, so the merge runs on another core while the database stays responsive.</p>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- ====================== 06 B+ vs LSM ====================== -->
+  <section class="sec" id="bplus-vs-lsm">
+    <div class="sec-head">
+      <div class="sec-num">06</div>
+      <h2>B+ tree vs LSM tree</h2>
+    </div>
+    <p>Almost every database uses one of these two structures, and "why did you choose an LSM tree?" is the question most likely to decide your viva. So know the contrast cold.</p>
+
+    <h3>How a B+ tree works (the other camp)</h3>
+    <p>A <strong>B+ tree</strong> is a balanced, sorted tree of fixed-size <em>pages</em>. Internal pages hold keys that route you down; all real data sits in the <em>leaf</em> pages, which are linked together in sorted order. A lookup walks from the root down to a leaf — a handful of page reads, always the same shape. It's the structure behind MySQL/InnoDB, PostgreSQL, SQLite and most relational databases.</p>
+    <p>The defining trait: updates happen <strong>in place</strong>. To change a key, you find its leaf page and rewrite that page where it sits on disk. If a page overflows, it <em>splits</em> into two and the parent is updated. This keeps reads tight and predictable — but every write is a <strong>random-access</strong> write to a specific spot on disk.</p>
+
+    <figure class="plate" data-stepper id="fig-bplus">
+      <div class="plate__bar">
+        <div class="plate__title"><span class="fignum">Fig 6.1</span>Two philosophies side by side</div>
+        <div class="stepper"><button class="step-btn" data-act="prev" aria-label="Previous step">◀ Prev</button><span class="step-count">step <b class="cur">0</b>/<span class="tot">0</span></span><button class="step-btn step-btn--primary" data-act="next" aria-label="Next step">Next ▶</button><button class="step-btn" data-act="reset" aria-label="Reset to start">Reset</button><button class="step-btn" data-act="all" aria-label="Show all steps">Show all</button></div>
+      </div>
+      <div class="plate__body plate__scroll">
+        <svg viewBox="0 0 720 286" role="img" aria-label="On the left, a B+ tree: a root routes down to linked sorted leaf pages, and writes edit a leaf in place. On the right, an LSM tree: writes append to an in-memory table, flush to L0, and merge into L1 in the background.">
+          <defs><marker id="ahb" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9z" fill="#48564C"/></marker></defs>
+          <!-- divider -->
+          <line x1="360" y1="20" x2="360" y2="266" stroke="#C3CFB6" stroke-dasharray="4 4"/>
+          <!-- ===== B+ TREE (left) ===== -->
+          <text data-step="1" x="170" y="28" text-anchor="middle" font-size="12" font-weight="700" fill="#2C5E8C">B+ TREE — read-optimised, in place</text>
+          <g text-anchor="middle" font-size="11" font-weight="700" fill="#2C5E8C">
+            <g data-step="1"><rect x="130" y="44" width="80" height="28" rx="5" fill="#E1ECF4" stroke="#2C5E8C"/><text x="170" y="62">10 · 20</text></g>
+            <g data-step="1">
+              <rect x="30" y="120" width="80" height="28" rx="5" fill="#fff" stroke="#9cc1de"/><text x="70" y="138" font-size="10">1·4·9</text>
+              <rect x="130" y="120" width="80" height="28" rx="5" fill="#fff" stroke="#9cc1de"/><text x="170" y="138" font-size="10">10·14</text>
+              <rect x="230" y="120" width="80" height="28" rx="5" fill="#fff" stroke="#9cc1de"/><text x="270" y="138" font-size="10">20·27·31</text>
+            </g>
+          </g>
+          <g stroke="#48564C" stroke-width="1.4" fill="none">
+            <line data-step="1" x1="155" y1="72" x2="80" y2="118" marker-end="url(#ahb)"/>
+            <line data-step="1" x1="170" y1="72" x2="170" y2="118" marker-end="url(#ahb)"/>
+            <line data-step="1" x1="190" y1="72" x2="262" y2="118" marker-end="url(#ahb)"/>
+            <!-- leaf links -->
+            <line data-step="1" x1="110" y1="134" x2="128" y2="134" stroke="#9cc1de" marker-end="url(#ahb)"/>
+            <line data-step="1" x1="210" y1="134" x2="228" y2="134" stroke="#9cc1de" marker-end="url(#ahb)"/>
+          </g>
+          <g data-step="2"><rect x="120" y="170" width="120" height="26" rx="5" fill="#F6E2E1" stroke="#AE3F3C"/><text x="180" y="187" text-anchor="middle" font-size="9.5" font-weight="700" fill="#AE3F3C">write = edit leaf in place</text></g>
+          <text data-step="2" x="170" y="222" text-anchor="middle" font-size="9.5" fill="#7C8A7E">↑ random-access write to a fixed spot;</text>
+          <text data-step="2" x="170" y="236" text-anchor="middle" font-size="9.5" fill="#7C8A7E">a full page splits in two</text>
+          <text data-step="3" x="170" y="260" text-anchor="middle" font-size="10" font-weight="700" fill="#2C5E8C">read = one short top-down path</text>
+
+          <!-- ===== LSM (right) ===== -->
+          <text data-step="4" x="540" y="28" text-anchor="middle" font-size="12" font-weight="700" fill="#2C5D20">LSM TREE — write-optimised, append</text>
+          <g data-step="4"><rect x="470" y="44" width="140" height="34" rx="7" fill="#E8F1DE" stroke="#3C7B2C"/><text x="540" y="60" text-anchor="middle" font-size="10.5" font-weight="700" fill="#2C5D20">MemTable (memory)</text><text x="540" y="73" text-anchor="middle" font-size="9" fill="#3c5a30">write = append here</text></g>
+          <line data-step="5" x1="540" y1="78" x2="540" y2="104" stroke="#48564C" stroke-width="1.4" marker-end="url(#ahb)"/><text data-step="5" x="572" y="96" font-size="9" fill="#7C8A7E">flush</text>
+          <g data-step="5"><rect x="430" y="106" width="100" height="30" rx="6" fill="#EaF1F7" stroke="#2C5E8C"/><text x="480" y="125" text-anchor="middle" font-size="10.5" font-weight="700" fill="#2C5E8C">L0</text>
+            <rect x="556" y="106" width="100" height="30" rx="6" fill="#EaF1F7" stroke="#2C5E8C"/><text x="606" y="125" text-anchor="middle" font-size="10.5" font-weight="700" fill="#2C5E8C">L0</text></g>
+          <path data-step="6" stroke-dasharray="6 6" d="M540 136 V164" stroke="#3C7B2C" stroke-width="1.8" fill="none" marker-end="url(#ahb)"/><text data-step="6" x="585" y="156" font-size="9" fill="#7C8A7E">compact</text>
+          <g data-step="6"><rect x="450" y="166" width="180" height="30" rx="6" fill="#cfe1ef" stroke="#2C5E8C"/><text x="540" y="185" text-anchor="middle" font-size="10.5" font-weight="700" fill="#2C5E8C">L1 (merged, tidy)</text></g>
+          <text data-step="6" x="540" y="222" text-anchor="middle" font-size="9.5" fill="#7C8A7E">↑ writes are sequential &amp; off the</text>
+          <text data-step="6" x="540" y="236" text-anchor="middle" font-size="9.5" fill="#7C8A7E">critical path; merging happens later</text>
+          <text data-step="6" x="540" y="260" text-anchor="middle" font-size="10" font-weight="700" fill="#2C5D20">read = check memory, then levels</text>
+        </svg>
+      </div>
+      <ol class="steplist">
+        <li data-step="1"><span class="sn">1</span><span>A B+ tree is balanced: a root routes you down to sorted leaf pages, which are linked in order for easy scans.</span></li>
+        <li data-step="2"><span class="sn">2</span><span>A write edits the target leaf in place — a random-access write to a fixed spot; a full page splits in two.</span></li>
+        <li data-step="3"><span class="sn">3</span><span>A read is one short, predictable top-down path — which is why B+ trees excel at reads.</span></li>
+        <li data-step="4"><span class="sn">4</span><span>An LSM tree instead appends every write to the in-memory memtable.</span></li>
+        <li data-step="5"><span class="sn">5</span><span>When full, the memtable is flushed to a sorted SSTable in L0.</span></li>
+        <li data-step="6"><span class="sn">6</span><span>Compaction later merges tables down into L1 and beyond; a read checks memory, then the levels.</span></li>
+      </ol>
+      <figcaption class="plate__cap">The split runs deep: B+ trees optimise the <em>read</em> by keeping everything sorted in place, paying with random-access writes. LSM trees optimise the <em>write</em> by only ever appending, paying with extra read and merge work that's deferred to the background.</figcaption>
+    </figure>
+
+    <h3>Complexity, operation by operation</h3>
+    <p>Here <i>n</i> is the number of keys and <i>b</i> the page branching factor of a B+ tree. The headline numbers look similar — the real story is in the <em>type</em> of I/O (random vs sequential), which the notes call out.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Operation</th><th>B+ tree</th><th>LSM tree (KiwiDB)</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Point read</strong></td><td class="win">O(log<sub>b</sub> n)<br><span class="num"></span>one tight top-down path; very predictable</td><td>O(log n) per source × a few sources; <strong>bloom filters</strong> skip almost all of them, so in practice close to one lookup</td></tr>
+          <tr><td><strong>Range scan</strong></td><td class="win">Excellent — leaves are linked, so it's one sequential walk</td><td>Good, but must merge the ranges across levels (a k-way merge on the fly)</td></tr>
+          <tr><td><strong>Insert / write</strong></td><td>O(log<sub>b</sub> n) but a <span class="lose">random-access</span> write to a specific page</td><td class="win">O(1) amortised — append to the in-memory table; disk writes are <strong>sequential</strong> and batched</td></tr>
+          <tr><td><strong>Update</strong></td><td>Overwrite the value <span class="lose">in place</span> (may trigger a page split)</td><td>Append a newer version; the old one is cleaned up at compaction</td></tr>
+          <tr><td><strong>Delete</strong></td><td>Remove from the leaf in place (may merge pages)</td><td>Append a tombstone; space reclaimed at compaction</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>The three amplifications, compared</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Amplification</th><th>B+ tree</th><th>LSM tree</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Write</strong><br><span style="font-weight:400;color:var(--ink-faint)">bytes written per logical write</span></td><td>Lower count, but writes are <span class="lose">random</span> and a whole page is rewritten for a small change</td><td class="win">Higher count (flush + each compaction), but every write is <strong>sequential</strong> — far friendlier to SSDs</td></tr>
+          <tr><td><strong>Read</strong><br><span style="font-weight:400;color:var(--ink-faint)">places checked per read</span></td><td class="win">Low — one root-to-leaf path</td><td>Higher — the key may be in any level; <strong>bloom filters</strong> bring it back down</td></tr>
+          <tr><td><strong>Space</strong><br><span style="font-weight:400;color:var(--ink-faint)">extra disk beyond live data</span></td><td>Pages are often only ~half full (fragmentation)</td><td>Dead versions &amp; tombstones linger <span class="lose">until</span> compaction reclaims them</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout callout--plain">
+      <div class="callout__label">▪ The one-sentence summary</div>
+      <p><strong>B+ trees turn writes into random I/O to keep reads cheap; LSM trees turn writes into sequential I/O and pay for it later with compaction.</strong> Modern SSDs and write-heavy workloads (logs, metrics, events) tilt that trade toward LSM — which is exactly KiwiDB's target.</p>
+    </div>
+
+    <h3>So when would you pick each?</h3>
+    <div class="grid2">
+      <div class="card card--disk"><h4>Choose a B+ tree when…</h4><p>Reads and range queries dominate; you need predictable low read latency; the workload is classic transactional/relational. Examples: MySQL (InnoDB), PostgreSQL, SQLite.</p></div>
+      <div class="card card--mem"><h4>Choose an LSM tree when…</h4><p>Writes/ingest dominate; you're on SSDs that love sequential writes; you can tolerate background compaction and slightly costlier reads. Examples: Cassandra, RocksDB, LevelDB, HBase — and KiwiDB.</p></div>
+    </div>
+    <div class="callout callout--exam">
+      <div class="callout__label">★ If the examiner asks…</div>
+      <p>"Your project is write-optimised — what did you give up, and how did you claw it back?" → We gave up cheap reads and clean space (higher read &amp; space amplification). We claw reads back with <strong>bloom filters + a block cache + a sparse index</strong>, and we claw space back with <strong>compaction</strong>. That's the honest, complete answer.</p>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- ====================== 07 CONCURRENCY ====================== -->
+  <section class="sec" id="concurrency">
+    <div class="sec-head">
+      <div class="sec-num">07</div>
+      <h2>Concurrency &amp; correctness</h2>
+    </div>
+    <p>KiwiDB is <em>async-first</em>: many operations are in flight at once. Correctness comes from choosing the <strong>smallest lock that's safe</strong> for each piece of shared state, plus a few invariants that make crashes harmless.</p>
+
+    <h3>The locking map</h3>
+    <p>Notice there's no single global lock — each structure guards itself with the lightest mechanism it can:</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Shared state</th><th>Protected by</th><th>Why this choice</th></tr></thead>
+        <tbody>
+          <tr><td>Skip-list nodes</td><td>Per-node locks; lock-free reads</td><td>Writers touching different keys don't block each other; reads never lock at all</td></tr>
+          <tr><td>Memtable size/count</td><td>Tiny dedicated locks</td><td>Counters update atomically without locking the whole table</td></tr>
+          <tr><td>Set of live SSTables</td><td>Async reader-writer lock (writer-preferred)</td><td>Read-heavy, rarely changed; many readers, occasional exclusive writer</td></tr>
+          <tr><td>SSTable file lifecycle</td><td>Reference-counted registry</td><td>A file being compacted away isn't deleted until in-flight reads finish</td></tr>
+          <tr><td>Flush commit order</td><td>Per-slot events (the "event chain")</td><td>Writes parallelise; commits serialise — visibility matches write order</td></tr>
+          <tr><td>Which level is compacting</td><td>Level "reservation" set</td><td>Two compactions never touch the same level at once</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>The invariants that make a crash a non-event</h3>
+    <ul>
+      <li><strong>Log before memtable.</strong> Nothing is acknowledged until it's durable in the WAL.</li>
+      <li><strong>Checksums everywhere.</strong> Every WAL frame and every SSTable record carries a CRC32, so corruption or truncation is detected, never silently served.</li>
+      <li><strong><code>meta.json</code> written last.</strong> An SSTable counts as "complete" only when its metadata file exists. A crash mid-write leaves an incomplete folder that recovery simply ignores.</li>
+      <li><strong>Atomic swaps.</strong> WAL truncation and compaction's file replacement publish their result in one atomic step, so a reader sees either the old world or the new — never a half-built one.</li>
+      <li><strong>Versions, not overwrites.</strong> Because data is only ever appended with a higher sequence number, there's no in-place state to corrupt.</li>
+    </ul>
+    <div class="callout callout--why">
+      <div class="callout__label">◆ Why it matters</div>
+      <p>These five rules together give KiwiDB its headline property: <strong>crash-safety</strong>. You can kill the process at any instant and it restarts in a consistent state with no acknowledged write lost. That's the difference between a toy and a real storage engine — and a great thing to state plainly in a viva.</p>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- ====================== 08 ARCHITECTURE ====================== -->
+  <section class="sec" id="architecture">
+    <div class="sec-head">
+      <div class="sec-num">08</div>
+      <h2>Architecture &amp; tooling — the guided tour</h2>
+    </div>
+
+    <h3>The module map</h3>
+    <p>The codebase mirrors the concepts in this guide — each folder is one subsystem you've already met:</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Folder</th><th>What lives there</th></tr></thead>
+        <tbody>
+          <tr><td><code>app/engine/</code></td><td>The <code>LSMEngine</code> orchestrator + its managers (WAL, memtable, SSTable, compaction), the flush pipeline, config, and sequence generator</td></tr>
+          <tr><td><code>app/memtable/</code></td><td>The concurrent skip list, and the active &amp; immutable memtables</td></tr>
+          <tr><td><code>app/wal/</code></td><td>The write-ahead log writer and replay</td></tr>
+          <tr><td><code>app/sstable/</code></td><td>SSTable writer, reader, metadata, and the ref-counted registry</td></tr>
+          <tr><td><code>app/compaction/</code></td><td>The picklable compaction task and the subprocess merge worker</td></tr>
+          <tr><td><code>app/bloom/</code> · <code>app/index/</code> · <code>app/cache/</code></td><td>Bloom filter, sparse index, three-tier block cache</td></tr>
+          <tr><td><code>app/common/</code></td><td>Shared utilities: encoding, CRC, the k-way merge iterator, the async RW-lock, UUIDv7, the abstract contracts, and error types</td></tr>
+          <tr><td><code>app/observability/</code></td><td>Structured logging and the live TCP log-broadcast server</td></tr>
+          <tr><td><code>main.py</code> · <code>app/cli.py</code></td><td>Entry points: the interactive REPL, the API server, and the web dashboard</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>The public API — small on purpose</h3>
+    <p>Everything above sits behind six async methods. This is the whole contract a user sees:</p>
+    <pre><code>engine = <span class="k">await</span> LSMEngine.open(data_root)   <span class="c"># open or recover</span>
+<span class="k">await</span> engine.put(key, value)              <span class="c"># write / update</span>
+value = <span class="k">await</span> engine.get(key)            <span class="c"># read (None if absent/deleted)</span>
+<span class="k">await</span> engine.delete(key)                   <span class="c"># tombstone</span>
+<span class="k">await</span> engine.flush()                       <span class="c"># force memtable → disk</span>
+<span class="k">await</span> engine.close()                       <span class="c"># flush + release everything</span></code></pre>
+    <div class="callout callout--plain">
+      <div class="callout__label">▪ In plain words</div>
+      <p>All the machinery — WAL, skip list, flushing, compaction, caching — is hidden behind <code>put</code>/<code>get</code>/<code>delete</code>. A clean, minimal public surface over rich internals is itself a design quality worth pointing out.</p>
+    </div>
+
+    <h3>What you can show an examiner live</h3>
+    <p>KiwiDB ships three faces, which makes for a strong demo:</p>
+    <div class="grid3">
+      <div class="card"><h4>Interactive REPL</h4><p>A terminal shell for <code>put</code>/<code>get</code>/<code>delete</code>/<code>flush</code>/<code>stats</code>. Great for showing a write, a flush, then reading it back.</p></div>
+      <div class="card"><h4>Web dashboard</h4><p>A FastAPI + React app with pages for the MemTable, the SSTable levels, live compaction, a <strong>lookup-trace</strong> view (watch a key's read path), a load generator, and live logs.</p></div>
+      <div class="card"><h4>REST API</h4><p>Endpoints under <code>/api/v1/</code> for KV ops, memtable/disk inspection, compaction control, stats, and config — plus a WebSocket for streaming logs.</p></div>
+    </div>
+    <p>The <strong>lookup-trace</strong> page is the demo to rehearse: it visualises exactly the read path from Fig 4.2 (memtable → bloom → index → block) for any key the examiner names — concrete proof you understand your own system.</p>
+
+    <h3>Observability &amp; configuration</h3>
+    <ul>
+      <li><strong>Structured logging</strong> via <code>structlog</code>: every event is a queryable record, written to a file and <em>broadcast over TCP</em> (default port 9009) so a separate terminal can tail the engine live while you demo.</li>
+      <li><strong>Runtime-mutable config</strong>: thresholds like memtable size and the L0 compaction trigger live in a JSON file and can be changed while running. A <strong>dev</strong> mode counts thresholds in <em>entries</em> (so flushes/compactions happen with just a handful of keys — perfect for a demo), while <strong>prod</strong> mode counts <em>bytes</em>.</li>
+    </ul>
+    <div class="callout callout--exam">
+      <div class="callout__label">★ Demo tip</div>
+      <p>Switch to <strong>dev mode</strong> before the viva so a few writes are enough to trigger a real flush and a real compaction in front of the examiner — then tail the live logs to narrate it as it happens.</p>
+    </div>
+
+    <h3>Testing &amp; build commands</h3>
+    <p>The project is covered by a <code>pytest</code> + <code>pytest-asyncio</code> suite spanning the engine, recovery, compaction (including tombstone GC and dedup), the skip list under concurrent writers, bloom filters and encoding. Commands an examiner might ask to see:</p>
+    <pre><code><span class="k">uv</span> sync                 <span class="c"># install dependencies</span>
+<span class="k">uv</span> run poe start        <span class="c"># launch the interactive REPL</span>
+kiwidb web --port 8081   <span class="c"># build the dashboard + serve it</span>
+<span class="k">uv</span> run poe test         <span class="c"># run the test suite</span>
+<span class="k">uv</span> run poe check        <span class="c"># strict type-checking + linting</span></code></pre>
+  </section>
+
+  <hr>
+
+  <!-- ====================== 09 Q&A BANK ====================== -->
+  <section class="sec" id="qa">
+    <div class="sec-head">
+      <div class="sec-num">09</div>
+      <h2>Examiner Q&amp;A bank</h2>
+    </div>
+    <p>Real questions an external examiner is likely to ask, with crisp model answers. Click a question to reveal its answer and <strong>try to answer first</strong> — then check yourself.</p>
+
+    <div class="qbank">
+      <p class="qcat">LSM fundamentals</p>
+      <details class="qa"><summary><span class="q">Q1</span> What is an LSM tree in one sentence?</summary><div class="qa__a"><p>A storage structure that buffers writes in a sorted in-memory table, flushes them to immutable sorted files on disk, and periodically merges those files in the background — trading slightly costlier reads for very fast, sequential writes.</p></div></details>
+      <details class="qa"><summary><span class="q">Q2</span> Why is it called "log-structured"?</summary><div class="qa__a"><p>Because data is only ever <em>appended</em> — like a log — never modified in place. New values and delete-markers are added; the structure is a merge of these append-only layers.</p></div></details>
+      <details class="qa"><summary><span class="q">Q3</span> Name three real databases that use LSM trees.</summary><div class="qa__a"><p>Cassandra, RocksDB, LevelDB, HBase, ScyllaDB — any of these. They're the standard choice for write-heavy workloads.</p></div></details>
+      <details class="qa"><summary><span class="q">Q4</span> What are read, write and space amplification?</summary><div class="qa__a"><p><strong>Write:</strong> how many times one logical write is physically re-written (flush + each compaction). <strong>Read:</strong> how many places you may check to answer one read (memtable + levels). <strong>Space:</strong> extra disk held by dead versions and tombstones before compaction reclaims it. LSM trees have higher amplification on all three than a B+ tree but win on write <em>throughput</em> because the writes are sequential.</p></div></details>
+
+      <p class="qcat">Memtable &amp; skip list</p>
+      <details class="qa"><summary><span class="q">Q5</span> Why a skip list and not a hash map for the memtable?</summary><div class="qa__a"><p>The memtable must stay <strong>sorted</strong> so it can be flushed straight into a sorted SSTable and so range scans work. A hash map gives O(1) lookup but no order. A skip list gives O(log n) lookup <em>and</em> keeps keys ordered, with easy concurrency.</p></div></details>
+      <details class="qa"><summary><span class="q">Q6</span> Why a skip list rather than a balanced BST (AVL / red-black)?</summary><div class="qa__a"><p>Same O(log n) search, but far easier to make concurrent. Insertion only relinks a few forward pointers, so fine-grained per-node locking and lock-free reads are straightforward. Balanced trees need rotations that ripple through the structure and are painful to lock correctly.</p></div></details>
+      <details class="qa"><summary><span class="q">Q7</span> How does the skip list avoid deadlock with many writers?</summary><div class="qa__a"><p>Every insert acquires its node locks in a <strong>fixed global order</strong> (ascending Python <code>id()</code>). Consistent lock ordering is the classic guarantee that a cycle of "A waits for B, B waits for A" can never form. It also validates predecessors after locking and retries on a rare conflict (optimistic concurrency).</p></div></details>
+      <details class="qa"><summary><span class="q">Q8</span> How can reads be lock-free while writes take locks?</summary><div class="qa__a"><p>A new node is linked into the lower levels first and only marked <code>fully_linked</code> as the final step. Readers just follow pointers and treat a not-yet-fully-linked node as not present, so they never observe a half-built node and never need a lock.</p></div></details>
+
+      <p class="qcat">Durability, WAL &amp; recovery</p>
+      <details class="qa"><summary><span class="q">Q9</span> If the memtable is in RAM, how do you not lose data on a crash?</summary><div class="qa__a"><p>The Write-Ahead Log. Every write is appended to the WAL on disk <em>before</em> it's acknowledged, so a crash can be recovered by replaying the log on startup.</p></div></details>
+      <details class="qa"><summary><span class="q">Q10</span> Walk me through recovery.</summary><div class="qa__a"><p>Restore the sequence counter from the highest seq already on disk → replay the WAL frame by frame, verifying each CRC → skip any entry whose seq is already covered by a flushed SSTable → load the remaining (unflushed) entries into a fresh memtable. The engine is now in exactly its pre-crash state.</p></div></details>
+      <details class="qa"><summary><span class="q">Q11</span> Why is <code>meta.json</code> written last in an SSTable?</summary><div class="qa__a"><p>It's a completeness marker. The data, index and filter files are written first; only when all are safely on disk is <code>meta.json</code> written. If a crash interrupts the write, there's no <code>meta.json</code>, so recovery treats the folder as incomplete and ignores it — no corruption.</p></div></details>
+      <details class="qa"><summary><span class="q">Q12</span> What is the CRC32 for?</summary><div class="qa__a"><p>Integrity. Every WAL frame and SSTable record stores a checksum. On read, KiwiDB recomputes it; a mismatch means corruption or a crash-truncated tail, so it stops/skips rather than returning garbage.</p></div></details>
+
+      <p class="qcat">SSTables, bloom filters &amp; caching</p>
+      <details class="qa"><summary><span class="q">Q13</span> Trace exactly what happens on a read that misses the memtable.</summary><div class="qa__a"><p>For each SSTable, newest first: check the <strong>bloom filter</strong> — if "no", skip the whole table. If "maybe", use the <strong>sparse index</strong> to find the one block that could hold the key, fetch that block from the <strong>cache</strong> or via <strong>mmap</strong> from disk, and scan it. Return the highest-seq match; a tombstone means "not found".</p></div></details>
+      <details class="qa"><summary><span class="q">Q14</span> Can a bloom filter be wrong?</summary><div class="qa__a"><p>It can produce <strong>false positives</strong> ("maybe present" when actually absent), which only cost a wasted lookup. It can <strong>never</strong> produce a false negative — if it says "absent", the key is definitely absent. That one-sided error is why it's safe as a read filter.</p></div></details>
+      <details class="qa"><summary><span class="q">Q15</span> How do you size a bloom filter?</summary><div class="qa__a"><p>From the expected key count <code>n</code> and target false-positive rate <code>p</code>: bits <code>m = -n·ln(p)/(ln2)²</code> and hash count <code>k = (m/n)·ln2</code>. Lower <code>p</code> ⇒ more bits and more hashes.</p></div></details>
+      <details class="qa"><summary><span class="q">Q16</span> Why a <em>sparse</em> index instead of indexing every key?</summary><div class="qa__a"><p>A dense index would be nearly as large as the data. The sparse index stores only the first key + offset of each block, so it's O(number of blocks) — small enough to keep in RAM. You binary-search it to the right block, then scan that one ~4 KB block.</p></div></details>
+      <details class="qa"><summary><span class="q">Q17</span> Why three separate caches?</summary><div class="qa__a"><p>So a flood of large data blocks can't evict the tiny, frequently-used bloom filters and indexes. Independent LRU caches with their own size limits let each tier protect what it needs.</p></div></details>
+
+      <p class="qcat">Compaction</p>
+      <details class="qa"><summary><span class="q">Q18</span> What problem does compaction solve?</summary><div class="qa__a"><p>Without it, files accumulate forever: reads check more and more tables (read amplification) and the disk fills with dead versions and tombstones (space amplification). Compaction merges files, drops superseded versions and expired tombstones, and keeps the level structure tidy.</p></div></details>
+      <details class="qa"><summary><span class="q">Q19</span> How does the merge work, algorithmically?</summary><div class="qa__a"><p>A k-way merge using a min-heap over the sorted inputs, O(M log N) for M records across N inputs. Equal keys are ordered newest-first, so the merge emits the newest version and skips older duplicates.</p></div></details>
+      <details class="qa"><summary><span class="q">Q20</span> When is a tombstone deleted?</summary><div class="qa__a"><p>Only when compaction is sure no older copy of the key can still exist beneath it — i.e. its sequence number is below the <code>seq_cutoff</code>. Until then the tombstone is preserved so it keeps shadowing older values in deeper levels.</p></div></details>
+      <details class="qa"><summary><span class="q">Q21</span> What stops an SSTable being deleted while a read is using it?</summary><div class="qa__a"><p>A reference-counted registry. A file marked for deletion after compaction is only physically removed once its reference count hits zero — i.e. all in-flight reads have finished.</p></div></details>
+
+      <p class="qcat">Parallelism &amp; the GIL</p>
+      <details class="qa"><summary><span class="q">Q22</span> What is the GIL and why does it matter here?</summary><div class="qa__a"><p>CPython's Global Interpreter Lock lets only one thread execute Python bytecode at a time per process. So CPU-bound work (like compaction) can't be sped up with threads, and would block everything else if run on the main process.</p></div></details>
+      <details class="qa"><summary><span class="q">Q23</span> How does KiwiDB get true parallelism for compaction?</summary><div class="qa__a"><p>It runs the merge in a separate <strong>process</strong> via <code>ProcessPoolExecutor</code>, wrapped in <code>asyncio.to_thread</code> so the event loop isn't blocked. The child process has its own interpreter and GIL and runs on another core, while the main process keeps serving reads and writes.</p></div></details>
+      <details class="qa"><summary><span class="q">Q24</span> Why must the compaction task contain only plain data?</summary><div class="qa__a"><p>Because it's <strong>pickled</strong> and sent across a process boundary. It carries file IDs, paths, level, and a seq cutoff — no open file handles or locks. The subprocess re-opens the files itself and returns just the new table's metadata.</p></div></details>
+      <details class="qa"><summary><span class="q">Q25</span> Difference between asyncio concurrency and multiprocessing here?</summary><div class="qa__a"><p><code>asyncio</code> overlaps <strong>I/O waits</strong> on one core (used for parallel SSTable writes during flush). <strong>multiprocessing</strong> gives real multi-core <strong>CPU</strong> parallelism (used for the compaction merge). Different tools for I/O-bound vs CPU-bound work.</p></div></details>
+
+      <p class="qcat">B+ tree vs LSM &amp; design</p>
+      <details class="qa"><summary><span class="q">Q26</span> Core difference between a B+ tree and an LSM tree?</summary><div class="qa__a"><p>A B+ tree updates data <strong>in place</strong> (random-access writes) to keep reads cheap. An LSM tree only ever <strong>appends</strong> (sequential writes) and defers cleanup to background compaction. B+ favours reads; LSM favours writes.</p></div></details>
+      <details class="qa"><summary><span class="q">Q27</span> Why is sequential I/O faster, even if you write more bytes?</summary><div class="qa__a"><p>No disk seeking, and the OS/SSD can batch sequential writes efficiently. LSM converts many small random writes into a few big sequential ones, which is a big net win on modern hardware — even though the total bytes written (write amplification) is higher.</p></div></details>
+      <details class="qa"><summary><span class="q">Q28</span> Given LSM has worse read amplification, why are your reads still fast?</summary><div class="qa__a"><p>Three mitigations stack up: bloom filters skip almost every table without disk I/O; the sparse index pinpoints one block; and the block cache keeps hot blocks, indexes and filters in RAM. Together they bring real-world reads close to a single lookup.</p></div></details>
+      <details class="qa"><summary><span class="q">Q29</span> Why did you choose an LSM tree for this project?</summary><div class="qa__a"><p>To build a write-optimised, crash-safe engine from scratch and learn database internals deeply: WAL durability, concurrent in-memory structures, on-disk file formats, background compaction, and Python concurrency around the GIL. The LSM design exercises all of these.</p></div></details>
+      <details class="qa"><summary><span class="q">Q30</span> What would you improve or add next?</summary><div class="qa__a"><p>Good honest answers: leveled (size-tiered vs leveled) compaction tuning, block compression, a manifest/checkpoint to speed recovery, range-scan iterators exposed in the API, or per-key TTL. Showing you know the limits earns credibility.</p></div></details>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- ====================== 10 RECAP & GLOSSARY ====================== -->
+  <section class="sec" id="recap">
+    <div class="sec-head">
+      <div class="sec-num">10</div>
+      <h2>The 5-minute recap &amp; glossary</h2>
+    </div>
+    <h3>Explain the whole project in one breath</h3>
+    <p>If you can say this aloud, you're ready:</p>
+    <div class="callout callout--plain">
+      <div class="callout__label">▪ The end-to-end story</div>
+      <p>"KiwiDB is a key-value store built on a <strong>log-structured merge tree</strong>. A write is first appended to a <strong>write-ahead log</strong> on disk for durability, then inserted into an in-memory, sorted <strong>skip-list memtable</strong> — so writes are fast and crash-safe. When the memtable fills, it's frozen and <strong>flushed</strong> to an immutable, sorted <strong>SSTable</strong> in level 0; flushes write in parallel but commit in order. Reads check the memtable, then each SSTable newest-first, using a <strong>bloom filter</strong> to skip tables, a <strong>sparse index</strong> to find the block, and a <strong>cache</strong> to avoid disk. In the background, <strong>compaction</strong> merges tables down through the levels, dropping old versions and tombstones — and it runs in a <strong>separate process</strong> to dodge Python's GIL and keep the database responsive. The whole thing favours fast sequential writes, paying for it with background work, which is exactly the right trade for write-heavy workloads."</p>
+    </div>
+
+    <h3>Glossary</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><strong>LSM tree</strong></td><td>Log-Structured Merge tree: buffer in memory, flush to sorted immutable files, merge in background.</td></tr>
+          <tr><td><strong>MemTable</strong></td><td>The in-memory, sorted, writable table (a skip list). The only place writes land first.</td></tr>
+          <tr><td><strong>SSTable</strong></td><td>Sorted String Table: an immutable on-disk file of key-value records in sorted order (+ index, filter, meta).</td></tr>
+          <tr><td><strong>WAL</strong></td><td>Write-Ahead Log: an append-only on-disk journal written before the memtable, for crash recovery.</td></tr>
+          <tr><td><strong>Skip list</strong></td><td>A sorted linked list with probabilistic "express lanes" giving O(log n) search and easy concurrency.</td></tr>
+          <tr><td><strong>Bloom filter</strong></td><td>A probabilistic set that answers "definitely absent" or "maybe present" — never a false negative.</td></tr>
+          <tr><td><strong>Sparse index</strong></td><td>First-key→block-offset map (one entry per block) to locate a key's block cheaply.</td></tr>
+          <tr><td><strong>Block cache</strong></td><td>In-RAM LRU cache of data blocks, indexes and bloom filters (three independent tiers).</td></tr>
+          <tr><td><strong>Compaction</strong></td><td>Background merge of SSTables that removes dead versions/tombstones and tidies the levels.</td></tr>
+          <tr><td><strong>Tombstone</strong></td><td>A marker recording that a key was deleted; shadows older values until garbage-collected.</td></tr>
+          <tr><td><strong>Sequence number</strong></td><td>A monotonically increasing version stamp on every write; highest seq wins on read (MVCC).</td></tr>
+          <tr><td><strong>Flush</strong></td><td>Writing a frozen memtable out to a new L0 SSTable.</td></tr>
+          <tr><td><strong>Event chain</strong></td><td>The mechanism that lets flushes write in parallel but commit in strict order.</td></tr>
+          <tr><td><strong>Amplification</strong></td><td>Extra work/space a design incurs: write (re-writes), read (sources checked), space (dead data).</td></tr>
+          <tr><td><strong>GIL</strong></td><td>Global Interpreter Lock: only one thread runs Python bytecode per process at a time.</td></tr>
+          <tr><td><strong>Process pool</strong></td><td>Separate worker processes (each with its own GIL) used to run CPU-bound compaction in parallel.</td></tr>
+          <tr><td><strong>CRC32</strong></td><td>A checksum used to detect corruption/truncation in WAL frames and SSTable records.</td></tr>
+          <tr><td><strong>mmap</strong></td><td>Memory-mapping a file so the OS pages it into memory on demand — used for fast SSTable reads.</td></tr>
+          <tr><td><strong>UUIDv7</strong></td><td>A time-ordered unique ID; sorting IDs sorts by creation time. Used to name SSTable folders.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout callout--exam">
+      <div class="callout__label">★ Final confidence check</div>
+      <p>Can you, without looking: (1) trace a write end-to-end? (2) trace a read and say where the bloom filter helps? (3) explain why compaction needs a separate process? (4) contrast LSM with a B+ tree in one sentence? If yes to all four — you're ready. Good luck. 🥝</p>
+    </div>
+  </section>
+
+  <!--SECTIONS-->
+
+  <footer class="foot">
+    <p><strong>KiwiDB Viva Field Guide.</strong> A study companion generated from the project source. Every behaviour described here is drawn from the actual code in <code>app/</code>. Read it once end-to-end, then use the Q&amp;A bank to self-quiz.</p>
+    <p>Tip: each figure is a <strong>click-through</strong>. Use <strong>Next ▶</strong> / <strong>◀ Prev</strong> to walk one stage at a time (the numbered list under each diagram highlights the current stage), <strong>Show all</strong> to reveal the whole picture, or <strong>Reset</strong> to start over. You can also use the ◀ ▶ arrow keys while a figure's buttons are focused.</p>
+  </footer>
+
+</div>
+</main>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* ---- reading progress bar ---- */
+  var fill = document.getElementById('progressFill');
+  function onScroll(){
+    var h = document.documentElement;
+    var max = (h.scrollHeight - h.clientHeight) || 1;
+    var p = Math.min(1, Math.max(0, (h.scrollTop || window.pageYOffset) / max));
+    fill.style.width = (p*100).toFixed(1) + '%';
+  }
+  window.addEventListener('scroll', onScroll, {passive:true});
+  window.addEventListener('resize', onScroll);
+  onScroll();
+
+  /* ---- TOC scrollspy ---- */
+  var links = Array.prototype.slice.call(document.querySelectorAll('#toc a'));
+  var map = {};
+  links.forEach(function(a){
+    var id = a.getAttribute('href').slice(1);
+    var el = document.getElementById(id);
+    if(el) map[id] = a;
+  });
+  var spy = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if(e.isIntersecting){
+        links.forEach(function(a){a.classList.remove('active');});
+        var a = map[e.target.id];
+        if(a) a.classList.add('active');
+      }
+    });
+  }, {rootMargin:'-12% 0px -78% 0px', threshold:0});
+  Object.keys(map).forEach(function(id){ var el=document.getElementById(id); if(el) spy.observe(el); });
+
+  /* ---- click-through stepper engine ---- */
+  document.querySelectorAll('.plate[data-stepper]').forEach(function(plate){
+    var stepped = Array.prototype.slice.call(plate.querySelectorAll('svg [data-step]'));
+    var lis     = Array.prototype.slice.call(plate.querySelectorAll('.steplist li'));
+    var maxStep = 0;
+    stepped.forEach(function(el){ maxStep = Math.max(maxStep, +el.getAttribute('data-step') || 0); });
+    lis.forEach(function(li){ maxStep = Math.max(maxStep, +li.getAttribute('data-step') || 0); });
+
+    /* lowest real step: base-scene diagrams carry a step 0 to show first;
+       pure-flow diagrams start at step 1 so the canvas is never empty */
+    var minStep = stepped.length ? Math.min.apply(null, stepped.map(function(el){ return +el.getAttribute('data-step') || 0; })) : 0;
+    var cur = minStep;
+    var prevBtn  = plate.querySelector('[data-act="prev"]');
+    var nextBtn  = plate.querySelector('[data-act="next"]');
+    var resetBtn = plate.querySelector('[data-act="reset"]');
+    var allBtn   = plate.querySelector('[data-act="all"]');
+    var curEl    = plate.querySelector('.step-count .cur');
+    var totEl    = plate.querySelector('.step-count .tot');
+    if(totEl) totEl.textContent = maxStep;
+
+    function render(){
+      stepped.forEach(function(el){
+        el.classList.toggle('show', (+el.getAttribute('data-step') || 0) <= cur);
+      });
+      lis.forEach(function(li){
+        var s = +li.getAttribute('data-step') || 0;
+        li.classList.toggle('active', s === cur);
+        li.classList.toggle('done', s < cur);
+      });
+      if(curEl) curEl.textContent = cur;
+      if(prevBtn)  prevBtn.disabled  = cur <= minStep;
+      if(nextBtn)  nextBtn.disabled  = cur >= maxStep;
+      if(resetBtn) resetBtn.disabled = cur <= minStep;
+    }
+    function go(n){ cur = Math.max(minStep, Math.min(maxStep, n)); render(); }
+
+    if(prevBtn)  prevBtn.addEventListener('click',  function(){ go(cur - 1); });
+    if(nextBtn)  nextBtn.addEventListener('click',  function(){ go(cur + 1); });
+    if(resetBtn) resetBtn.addEventListener('click', function(){ go(minStep); });
+    if(allBtn)   allBtn.addEventListener('click',   function(){ go(maxStep); });
+
+    /* arrow keys when a control inside this plate is focused */
+    plate.addEventListener('keydown', function(e){
+      if(e.key === 'ArrowRight'){ go(cur + 1); e.preventDefault(); }
+      else if(e.key === 'ArrowLeft'){ go(cur - 1); e.preventDefault(); }
+    });
+
+    render();
+  });
+})();
+</script>
+</body>
+</html>

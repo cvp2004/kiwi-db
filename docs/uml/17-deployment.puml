@@ -1,0 +1,53 @@
+@startuml
+title KiwiDB — Deployment Diagram
+skinparam shadowing false
+
+node "Client Device" as Client {
+  artifact "React SPA\n(browser)" as SPA
+}
+
+node "Host Machine (single server)" as Host {
+
+  node "Python Runtime (main process)" as Main {
+    component "uvicorn + FastAPI\n(REST + WebSocket)" as Web
+    component "LSMEngine\n(asyncio event loop)" as Engine
+    component "FlushPipeline" as FP
+    component "CompactionManager" as CM
+    artifact "TCP Log Broadcast\nserver :9009" as Log
+  }
+
+  node "Compaction Subprocess\n(ProcessPoolExecutor)" as Sub {
+    component "run_compaction()\n(own interpreter + GIL)" as Worker
+  }
+
+  node "Local Disk (data_root)" as Disk {
+    artifact "config.json" as Cfg
+    artifact "WAL file" as Wal
+    folder "sstable/L0..L3/<uuid7>/" as SSTDir {
+      artifact "data.bin" as Data
+      artifact "index.bin" as Index
+      artifact "filter.bin" as Filter
+      artifact "meta.json" as Meta
+    }
+  }
+}
+
+SPA --> Web : HTTP / WebSocket
+Web --> Engine : in-process calls
+
+Engine --> Wal : append / replay / truncate
+Engine --> SSTDir : read (mmap) / write
+Engine --> Cfg : load / save
+FP --> SSTDir : write new L0 tables
+CM --> Sub : submit task (pickled)\nvia asyncio.to_thread
+Worker --> SSTDir : read inputs / write merged output
+Engine ..> Log : emit structured logs
+Log ..> Client : live log stream (TCP / WS)
+
+note right of Sub
+  Separate OS process = separate GIL.
+  CPU-heavy merge runs on another core
+  while the main process keeps serving.
+end note
+
+@enduml

@@ -1,0 +1,46 @@
+@startuml
+title KiwiDB — Activity: Crash recovery on open()
+skinparam shadowing false
+
+start
+:LSMEngine.open(data_root);
+:Load config (or write defaults);
+
+partition "Scan SSTables on disk" {
+  :Walk sstable/L0..L3 directories;
+  while (more candidate folders?) is (yes)
+    if (meta.json present?) then (yes)
+      :register reader;
+      :track max seq (sst_max);
+    else (no)
+      :ignore folder\n(incomplete / crash-truncated write);
+    endif
+  endwhile (no more)
+}
+:Restore seq counter from sst_max;
+
+partition "Replay WAL" {
+  :Open WAL;
+  while (more frames?) is (yes)
+    :read [len][payload][CRC32];
+    if (CRC valid and complete?) then (yes)
+      :decode WALEntry;
+      if (seq > sst_max?) then (yes)
+        :keep (unflushed);
+      else (no)
+        :discard (already in an SSTable);
+      endif
+    else (no)
+      :stop replay\n(crash-truncated tail);
+    endif
+  endwhile (no more)
+}
+
+:Restore kept entries into a fresh memtable;
+:Set seq counter to max kept seq;
+:Start FlushPipeline + CompactionManager;
+:check_and_compact() (L0 threshold);
+:Engine ready — exact pre-crash state;
+stop
+
+@enduml

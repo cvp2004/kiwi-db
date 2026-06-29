@@ -1,0 +1,59 @@
+@startuml
+title KiwiDB — Sequence: Crash recovery on open()
+skinparam shadowing false
+autonumber
+
+actor Client
+participant "LSMEngine" as E
+participant "LSMConfig" as Cfg
+participant "SSTableManager" as SM
+participant "SeqGenerator" as Seq
+participant "WALManager" as WAL
+participant "MemTableManager" as MM
+
+Client -> E : LSMEngine.open(data_root)
+activate E
+
+E -> Cfg : load()  (or write defaults)
+activate Cfg
+Cfg --> E : config
+deactivate Cfg
+
+E -> SM : load()  scan sstable/L0..L3
+activate SM
+note right of SM
+  A folder counts as a valid SSTable
+  only if meta.json exists
+  (incomplete writes are ignored)
+end note
+SM --> E : readers + max seq on disk (sst_max)
+deactivate SM
+
+E -> Seq : restore(sst_max)
+activate Seq
+Seq --> E : seq counter set
+deactivate Seq
+
+E -> WAL : replay()
+activate WAL
+note right of WAL
+  Read each frame: [len][payload][CRC32].
+  Stop cleanly at first bad/short CRC
+  (crash-truncated tail).
+end note
+WAL --> E : entries[]
+deactivate WAL
+
+E -> E : keep entries where seq > sst_max\n(drop already-flushed)
+E -> MM : restore(unflushed entries)
+activate MM
+MM --> E : memtable rebuilt
+deactivate MM
+
+E -> Seq : restore(max unflushed seq)
+E -> E : start FlushPipeline + CompactionManager\ncheck L0 threshold
+
+E --> Client : engine (in exact pre-crash state)
+deactivate E
+
+@enduml

@@ -1,0 +1,42 @@
+@startuml
+title KiwiDB — Activity: Read path (get)
+skinparam shadowing false
+
+start
+:Receive get(key);
+
+if (found in active memtable?) then (yes)
+  :value = active hit;
+elseif (found in frozen queue?\n(newest first)) then (yes)
+  :value = frozen hit;
+else (miss in memory)
+  partition "SSTables: L0 newest-first, then L1..L3" {
+    while (more SSTables to check?) is (yes)
+      if (BloomFilter.may_contain(key)?) then (maybe)
+        :SparseIndex.floor_offset(key)\n-> candidate block;
+        if (block in BlockCache?) then (yes)
+          :read block from cache;
+        else (no)
+          :mmap block from disk;
+          :populate cache;
+        endif
+        :scan block;
+        if (key found?) then (yes)
+          :record highest-seq match;
+        endif
+      else (definitely absent)
+        :skip table (no disk access);
+      endif
+    endwhile (no more)
+  }
+  :value = highest-seq match across sources;
+endif
+
+if (value is a tombstone, or nothing found?) then (yes)
+  :return None (not found);
+else (no)
+  :return value;
+endif
+stop
+
+@enduml

@@ -1,0 +1,46 @@
+@startuml
+title KiwiDB — Activity: Compaction selection and execution
+skinparam shadowing false
+
+start
+:Triggered after a flush commit\nor a completed compaction job;
+:_find_eligible_jobs();
+note right
+  L0 -> L1 : L0 file count >= threshold
+  Lx -> Ly : level size/entries
+            exceed cascading limit
+end note
+
+if (any eligible (src, dst) jobs?) then (no)
+  stop
+else (yes)
+endif
+
+while (more eligible jobs?) is (yes)
+  :_try_reserve(src, dst);
+  if (src or dst already reserved?) then (yes)
+    :skip job (retried after\ncurrent jobs finish);
+  else (no)
+    :Build CompactionTask\n(primitive fields only -> picklable);
+    :Compute seq_cutoff for tombstone GC;
+
+    fork
+      :Run merge in subprocess\n(ProcessPoolExecutor, via asyncio.to_thread);
+      :k-way merge inputs;
+      :dedupe — keep highest seq per key;
+      :drop tombstones with seq < seq_cutoff;
+      :write output SSTable (finish_sync);
+    fork again
+      :Main process keeps\nserving reads & writes;
+    end fork
+
+    :Open output reader;
+    :commit_compaction_async()\n- register new table\n- mark inputs for deletion (refcount)\n- invalidate cache blocks;
+    :_release(src, dst);
+  endif
+endwhile (no more)
+
+:check_and_compact() again\n(handle cascades / L0 refill);
+stop
+
+@enduml

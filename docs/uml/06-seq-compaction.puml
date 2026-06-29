@@ -1,0 +1,61 @@
+@startuml
+title KiwiDB — Sequence: Compaction (merge in a subprocess)
+skinparam shadowing false
+autonumber
+
+participant "FlushPipeline\n/ prev job" as Trig
+participant "CompactionManager" as CM
+participant "ProcessPoolExecutor" as Pool
+participant "run_compaction()\n(subprocess)" as W
+participant "KWayMergeIterator" as MI
+participant "SSTableWriter" as SW
+participant "SSTableManager" as SM
+
+Trig -> CM : check_and_compact()
+activate CM
+CM -> CM : _find_eligible_jobs()\n(L0 count >= threshold, or level too big)
+CM -> CM : _try_reserve(src, dst)
+alt level already reserved
+  CM --> Trig : skip (retry later)
+else reserved
+  CM -> CM : _build_task() -> CompactionTask\n(only primitive fields -> picklable)
+
+  CM -> Pool : submit(run_compaction, task)  via asyncio.to_thread
+  note right of CM
+    Main process / event loop
+    stays free to serve reads & writes
+  end note
+  activate Pool
+  Pool -> W : run_compaction(task)
+  activate W
+  W -> W : open each input SSTable (sync, no cache)
+  W -> MI : merge(iterators, seq_cutoff, dedup=true)
+  activate MI
+  loop merged records
+    MI --> W : next (newest seq per key; tombstones GC'd below cutoff)
+    W -> SW : put(key, seq, ts, value)
+  end
+  deactivate MI
+  W -> SW : finish_sync()
+  activate SW
+  SW --> W : SSTableMeta
+  deactivate SW
+  W --> Pool : SSTableMeta
+  deactivate W
+  Pool --> CM : SSTableMeta
+  deactivate Pool
+
+  CM -> SM : open output reader + commit_compaction_async(task, meta, reader)
+  activate SM
+  note right of SM
+    Atomic swap: register new table,
+    mark inputs for deletion (refcount),
+    invalidate their cache blocks
+  end note
+  SM --> CM : ok
+  deactivate SM
+  CM -> CM : _release(src, dst); check_and_compact() again
+end
+deactivate CM
+
+@enduml

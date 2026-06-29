@@ -1,0 +1,65 @@
+@startuml
+title KiwiDB — Component Diagram
+skinparam shadowing false
+skinparam componentStyle uml2
+
+actor "Developer /\nApplication" as App
+actor "Operator /\nExaminer" as Op
+
+package "Interfaces" {
+  package "CLI / REPL" as CLI
+  package "Web Dashboard (React SPA)" as Web
+  package "REST + WebSocket API (FastAPI)" as API
+}
+
+package "KiwiDB" {
+  component "Engine Core\n(LSMEngine)" as Engine
+  component "MemTable Subsystem" as Mem
+  component "Write-Ahead Log" as WAL
+  component "SSTable Store" as SST
+  component "Compaction" as Comp
+  component "Block Cache" as Cache
+  component "Bloom + Sparse Index" as Idx
+  component "Observability\n(structlog + TCP broadcast)" as Obs
+  component "Config" as Cfg
+
+  interface "put/get/delete/flush" as IKV
+  interface "append/replay/truncate" as IWAL
+  interface "flush/get/commit" as ISST
+  interface "check_and_compact" as ICOMP
+  interface "get/put block" as ICACHE
+  interface "may_contain / floor_offset" as IIDX
+  interface "log events" as ILOG
+}
+
+App --> IKV
+Op --> CLI
+Op --> Web
+Web --> API
+CLI --> IKV
+API --> IKV
+
+Engine - IKV
+Engine ..> IWAL
+Engine ..> ISST
+Engine ..> ICOMP
+Engine ..> Mem
+Engine ..> Cfg
+
+WAL - IWAL
+SST - ISST
+Comp - ICOMP
+Cache - ICACHE
+Idx - IIDX
+Obs - ILOG
+
+SST ..> ICACHE
+SST ..> IIDX
+Comp ..> ISST
+Comp ..> IIDX
+Engine ..> ILOG
+API ..> ISST : inspect levels
+API ..> Mem : inspect memtable
+API ..> ILOG : stream logs (WS)
+
+@enduml

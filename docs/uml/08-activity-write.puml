@@ -1,0 +1,41 @@
+@startuml
+title KiwiDB — Activity: Write path (put / delete)
+skinparam shadowing false
+
+start
+:Receive put(key, value)\nor delete(key);
+note right: delete = put with\na tombstone value
+:Assign next sequence number\n(seq <- SeqGenerator.next());
+:Encode WALEntry\n[len][msgpack payload][CRC32];
+:Append to WAL on disk + fsync;
+note right: durability point —\na crash can no longer\nlose this write
+
+partition "Active memtable (skip list)" {
+  :Find predecessor nodes (lock-free);
+  :Lock predecessors in fixed id() order;
+  if (key already present?) then (yes)
+    :Update value + seq in place;
+  else (no)
+    :Link new node bottom-up;
+    :Set fully_linked = true (now visible);
+  endif
+  :Release locks;
+  :Update size / count;
+}
+
+if (active table over threshold?\n(entries in dev, bytes in prod)) then (yes)
+  if (immutable queue full?) then (yes)
+    :Apply backpressure\n(wait, with timeout);
+  else (no)
+  endif
+  :Snapshot + freeze active table;
+  :Push frozen table to queue;
+  :Create fresh active table;
+  :Signal FlushPipeline (async);
+else (no)
+endif
+
+:Acknowledge to caller;
+stop
+
+@enduml

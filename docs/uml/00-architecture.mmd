@@ -1,0 +1,55 @@
+%%{init: {"flowchart": {"curve": "linear", "nodeSpacing": 18, "rankSpacing": 26, "padding": 4}, "themeVariables": {"fontFamily": "Helvetica, Arial, sans-serif", "fontSize": "13px"}}}%%
+flowchart TB
+
+  classDef iface  fill:#FFFFFF,stroke:#C3CFB6,color:#16201A,stroke-width:1.4px;
+  classDef engine fill:#16201A,stroke:#16201A,color:#FFFFFF,stroke-width:1.4px;
+  classDef disk   fill:#E1ECF4,stroke:#2C5E8C,color:#1f4a72,stroke-width:1.4px;
+  classDef mem    fill:#E8F1DE,stroke:#3C7B2C,color:#2C5D20,stroke-width:1.4px;
+  classDef bg     fill:#F6EBD4,stroke:#C2811B,color:#9A6711,stroke-width:1.4px;
+  classDef store  fill:#EAF1F7,stroke:#9CC1DE,color:#2C5E8C,stroke-width:1.4px;
+
+  subgraph CLIENTS["Clients &amp; Interfaces"]
+    direction LR
+    App["Application API"] ~~~ Cli["CLI / REPL"] ~~~ Web["Web Dashboard"]
+  end
+
+  Engine["<b>LSM Engine — Orchestrator</b><br/><span style='font-size:11px'>sequence numbers (MVCC) · routing · config</span>"]
+
+  subgraph WRITE["Write Path &amp; In-Memory"]
+    direction LR
+    WAL["WAL · disk<br/><span style='font-size:11px'>append-only · CRC32</span>"] ~~~ Mem["MemTable · memory<br/><span style='font-size:11px'>skip list + flush queue</span>"]
+  end
+
+  subgraph BG["Background workers"]
+    direction LR
+    Flush["Flush Pipeline<br/><span style='font-size:11px'>parallel write · ordered commit</span>"] ~~~ Comp["Compaction<br/><span style='font-size:11px'>subprocess · bypasses GIL</span>"]
+  end
+
+  subgraph STORE["On-Disk SSTables · sorted, immutable · each level ≈ 10× larger"]
+    direction LR
+    L0["L0"] -- compact --> L1["L1"] -- compact --> L2["L2"] -- compact --> L3["L3"]
+    Acc["Read accelerators · per SSTable<br/><span style='font-size:11px'>Bloom · Sparse index · Block cache</span>"]
+  end
+
+  App --> Engine
+  Cli --> Engine
+  Web --> Engine
+  Engine -- "① log" --> WAL
+  Engine -- "② insert" --> Mem
+  Mem -- flush --> Flush
+  Flush -- "new L0" --> L0
+  Comp -. merge .-> L1
+  Engine -. read .-> Acc
+  Acc -. probe .-> L0
+
+  class App,Cli,Web iface;
+  class Engine engine;
+  class WAL,L0,L1,L2,L3 disk;
+  class Mem mem;
+  class Flush,Comp bg;
+  class Acc store;
+
+  style CLIENTS fill:#FBFCF8,stroke:#DCE3D2,color:#48564C
+  style WRITE   fill:#FBFCF8,stroke:#DCE3D2,color:#48564C
+  style BG      fill:#FDF6E8,stroke:#E6D2A3,color:#9A6711
+  style STORE   fill:#F4F8FB,stroke:#CFE0EC,color:#2C5E8C

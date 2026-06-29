@@ -1,0 +1,39 @@
+@startuml
+title KiwiDB — State Machine: SSTable file lifecycle
+skinparam shadowing false
+
+[*] --> Writing : SSTableWriter created (state OPEN)
+
+state Writing {
+  [*] --> Buffering
+  Buffering --> Buffering : put(key, seq, ts, value)\n(ascending keys)
+  Buffering --> Buffering : block full -> flush block,\nadd to sparse index + bloom
+}
+
+Writing --> Complete : finish() / finish_sync()\nwrites index.bin, filter.bin,\nthen meta.json LAST
+note right of Complete
+  meta.json present =
+  "table is complete".
+  A crash before this leaves an
+  incomplete folder, ignored on recovery.
+end note
+
+Complete --> Live : registered in SSTableManager\n(reader open, refcount = 0)
+
+state Live {
+  [*] --> Idle
+  Idle --> Reading : open_reader() (refcount++)
+  Reading --> Idle : reader released (refcount--)
+}
+
+Live --> MarkedForDeletion : superseded by compaction\n(mark_for_deletion)
+
+state MarkedForDeletion {
+  [*] --> Draining
+  Draining --> Draining : in-flight reads finishing
+}
+
+MarkedForDeletion --> Deleted : refcount == 0\n-> files removed, cache invalidated
+Deleted --> [*]
+
+@enduml

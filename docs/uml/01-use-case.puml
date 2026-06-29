@@ -1,0 +1,66 @@
+@startuml
+title KiwiDB — Use Case Diagram
+left to right direction
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+skinparam shadowing false
+
+actor "Application /\nDeveloper" as App
+actor "Operator /\nExaminer" as Op
+actor "Flush Pipeline\n(background)" as Flush <<system>>
+actor "Compaction Manager\n(background)" as Comp <<system>>
+actor "Clock /\nThreshold trigger" as Timer <<system>>
+
+rectangle "KiwiDB Storage Engine" {
+  usecase "Put (write / update)" as UC_Put
+  usecase "Get (read)" as UC_Get
+  usecase "Delete (tombstone)" as UC_Del
+  usecase "Manual flush" as UC_Flush
+  usecase "Open / recover engine" as UC_Open
+  usecase "Close engine" as UC_Close
+
+  usecase "Append to WAL" as UC_Wal
+  usecase "Freeze memtable" as UC_Freeze
+  usecase "Flush memtable to SSTable" as UC_DoFlush
+  usecase "Run compaction" as UC_Compact
+  usecase "Replay WAL" as UC_Replay
+
+  usecase "Inspect MemTable / SSTables" as UC_Inspect
+  usecase "Trace a key lookup" as UC_Trace
+  usecase "View live logs / stats" as UC_Logs
+  usecase "Edit runtime config" as UC_Config
+  usecase "Run load generator (demo)" as UC_Load
+}
+
+App --> UC_Put
+App --> UC_Get
+App --> UC_Del
+App --> UC_Flush
+App --> UC_Open
+App --> UC_Close
+
+Op --> UC_Inspect
+Op --> UC_Trace
+Op --> UC_Logs
+Op --> UC_Config
+Op --> UC_Load
+Op --> UC_Get
+Op --> UC_Put
+
+' write path always logs first, then may trigger a freeze
+UC_Put ..> UC_Wal : <<include>>
+UC_Del ..> UC_Wal : <<include>>
+UC_Put ..> UC_Freeze : <<extend>>\n(when full)
+UC_Flush ..> UC_Freeze : <<include>>
+
+' background actors
+Timer --> UC_Freeze
+Flush --> UC_DoFlush
+UC_Freeze ..> UC_DoFlush : <<include>>
+UC_DoFlush ..> UC_Compact : <<extend>>\n(threshold met)
+Comp --> UC_Compact
+
+' recovery
+UC_Open ..> UC_Replay : <<include>>
+
+@enduml

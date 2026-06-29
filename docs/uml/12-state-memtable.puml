@@ -1,0 +1,35 @@
+@startuml
+title KiwiDB — State Machine: MemTable lifecycle
+skinparam shadowing false
+
+[*] --> Active : created by\nMemTableManager
+
+state Active {
+  [*] --> Writable
+  Writable --> Writable : put(key, seq, ts, value)\n[under threshold]
+}
+note right of Active
+  Backed by a concurrent skip list.
+  Accepts writes; serves reads.
+end note
+
+Active --> Frozen : threshold exceeded\n/ manual flush()\n(snapshot + new active table)
+
+state Frozen {
+  [*] --> Queued
+  Queued --> Queued : served read-only\n(binary search)
+}
+note right of Frozen
+  Immutable. Sits in the
+  immutable queue (max N).
+  New writes apply backpressure
+  if the queue is full.
+end note
+
+Frozen --> Flushing : FlushPipeline\npicks up snapshot
+Flushing --> Flushed : SSTable written + committed\n(WAL truncated, popped from queue)
+Flushing --> Frozen : write failed /\nbatch aborted (retry)
+
+Flushed --> [*]
+
+@enduml

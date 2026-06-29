@@ -1,0 +1,294 @@
+@startuml
+title KiwiDB — Class Diagram
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam linetype ortho
+hide empty members
+
+' ===================== Abstract contracts =====================
+package "app.common (contracts)" {
+  abstract class StorageEngine <<abstract>> {
+    +{abstract} put(key, value)
+    +{abstract} get(key) : Value?
+    +{abstract} delete(key)
+    +{abstract} close()
+  }
+  abstract class MemTable <<abstract>> {
+    +{abstract} put(key, seq, ts, value)
+    +{abstract} get(key) : (seq, value)?
+    +{abstract} items() : Iterator
+    +{abstract} freeze() : list
+  }
+  interface Serializable <<interface>> {
+    +to_bytes() : bytes
+    +from_bytes(data) : Self
+  }
+  class AsyncRWLock {
+    -_readers : int
+    -_writer_active : bool
+    +read_lock()
+    +write_lock()
+  }
+  class KWayMergeIterator {
+    -heap : MinHeap<MergeRecord>
+    -seq_cutoff : int
+    -deduplicate : bool
+    -skip_tombstones : bool
+    +__next__() : Record
+  }
+  class MergeRecord {
+    +key; +seq; +timestamp_ms
+    +value; +source_idx
+    +__lt__(other)
+  }
+}
+
+' ===================== Engine core =====================
+package "app.engine" {
+  class LSMEngine {
+    +{static} open(data_root, config) : LSMEngine
+    +put(key, value)
+    +get(key) : Value?
+    +delete(key)
+    +flush()
+    +close()
+    +stats() : EngineStats
+    -recover()
+  }
+  class LSMConfig {
+    +mode : "dev"|"prod"
+    +max_memtable_bytes : int
+    +max_memtable_entries : int
+    +l0_compaction_threshold : int
+    +immutable_queue_max : int
+    +block_size : int
+    +bloom_fpr : float
+    +load(); +save(); +update(k, v)
+  }
+  class SeqGenerator {
+    -_counter : int
+    +next() : SeqNum
+    +current() : SeqNum
+    +restore(seq)
+  }
+  class MemTableManager {
+    -_active : ActiveMemTable
+    -_queue : deque<ImmutableMemTable>
+    +put(key, seq, ts, value)
+    +get(key) : Value?
+    +maybe_freeze() : Snapshot?
+    +pop_oldest()
+    +restore(entries)
+  }
+  class FlushPipeline {
+    -_semaphore : Semaphore
+    +run()
+    +dispatch(snapshots)
+    -_flush_slot(slot)
+    -_write_sstable(slot)
+    -_commit_slot(slot)
+  }
+  class FlushSlot {
+    +snapshot; +file_id; +position
+    +prev_committed : Event
+    +my_committed : Event
+    +batch_abort : Event
+  }
+  class WALManager {
+    +append(entry)
+    +replay() : list<WALEntry>
+    +truncate_before(seq)
+    +close()
+  }
+}
+
+' ===================== MemTable subsystem =====================
+package "app.memtable" {
+  class ActiveMemTable {
+    -_skiplist : SkipList
+    +size_bytes : int
+    +count : int
+    +put(...); +get(key); +items(); +freeze()
+  }
+  class ImmutableMemTable {
+    -_entries : sorted list
+    +get(key)  ' binary search
+    +items()
+  }
+  class SkipList {
+    -_head : _Node
+    -_level : int
+    +put(key, seq, ts, value)
+    +get(key) : (seq, value)?
+    +delete(key)
+    +snapshot() : Iterator
+    -_random_level() : int
+    -_find(key)
+    -_lock_nodes(nodes)
+  }
+  class "_Node" as Node {
+    +key; +seq; +timestamp_ms; +value
+    +forward : list<_Node>
+    +lock : Lock
+    +marked : bool
+    +fully_linked : bool
+  }
+}
+
+' ===================== WAL =====================
+package "app.wal" {
+  class WALWriter {
+    +append(entry)
+    +replay() : list<WALEntry>
+    +truncate(min_seq)
+    +sync()
+  }
+  class WALEntry {
+    +key; +value; +seq
+    +timestamp_ms; +op_type
+    +to_bytes(); +from_bytes(b)
+  }
+}
+
+' ===================== SSTable =====================
+package "app.sstable" {
+  class SSTableManager {
+    -_l0 : list<SSTableReader>
+    -_levels : map<Level, SSTableReader>
+    -cache : BlockCache
+    +flush(snapshot, file_id) : (meta, reader)
+    +get(key) : Value?
+    +commit(file_id, reader, dir)
+    +commit_compaction_async(task, meta, reader)
+    +load()
+  }
+  class SSTableWriter {
+    -state : OPEN|DONE
+    +put(key, seq, ts, value)
+    +finish() : SSTableMeta
+    +finish_sync() : SSTableMeta
+    -_flush_block()
+    -_finalize()
+  }
+  class SSTableReader {
+    +{static} open(dir, file_id, cache) : SSTableReader
+    +get(key) : (seq, ts, value)?
+    +iter_sorted() : Iterator
+    +close()
+    -_ensure_loaded()
+  }
+  class SSTableMeta {
+    +file_id; +level; +record_count
+    +block_count; +min_key; +max_key
+    +seq_min; +seq_max; +bloom_fpr
+    +to_json(); +from_json(s)
+  }
+  class SSTableRegistry {
+    -_refcounts : map<FileID, int>
+    +register(file_id, reader)
+    +open_reader(file_id)
+    +mark_for_deletion(file_id)
+  }
+}
+
+' ===================== Read accelerators =====================
+package "app.bloom / index / cache" {
+  class BloomFilter {
+    -_bit_count : int
+    -_num_hashes : int
+    -_bits : bytearray
+    +add(key)
+    +may_contain(key) : bool
+    +to_bytes(); +from_bytes(b)
+  }
+  class SparseIndex {
+    -_keys : list
+    -_offsets : list
+    +add(first_key, offset)
+    +floor_offset(key) : Offset?
+    +next_offset_after(off) : Offset?
+  }
+  class BlockCache {
+    -_data : LRUCache
+    -_index : LRUCache
+    -_bloom : LRUCache
+    +get(file_id, offset) : bytes?
+    +put(file_id, offset, block)
+    +invalidate(file_id)
+  }
+}
+
+' ===================== Compaction =====================
+package "app.compaction" {
+  class CompactionManager {
+    +check_and_compact()
+    -_find_eligible_jobs() : list
+    -_try_reserve(src, dst) : bool
+    -_run_one_compaction(src, dst)
+    -_run_in_subprocess(task) : SSTableMeta
+  }
+  class CompactionTask {
+    +task_id
+    +input_file_ids : list
+    +input_dirs : map
+    +output_file_id; +output_dir
+    +output_level; +seq_cutoff
+    +bloom_fpr
+  }
+  class "run_compaction()" as Worker <<subprocess>> {
+    +run_compaction(task) : SSTableMeta
+  }
+}
+
+' ===================== Relationships =====================
+StorageEngine <|.. LSMEngine
+MemTable <|.. ActiveMemTable
+MemTable <|.. ImmutableMemTable
+Serializable <|.. WALEntry
+Serializable <|.. SSTableMeta
+Serializable <|.. BloomFilter
+Serializable <|.. SparseIndex
+
+LSMEngine *-- MemTableManager
+LSMEngine *-- WALManager
+LSMEngine *-- SSTableManager
+LSMEngine *-- CompactionManager
+LSMEngine *-- FlushPipeline
+LSMEngine *-- SeqGenerator
+LSMEngine *-- LSMConfig
+
+MemTableManager *-- ActiveMemTable
+MemTableManager o-- ImmutableMemTable
+ActiveMemTable *-- SkipList
+SkipList *-- Node
+
+WALManager *-- WALWriter
+WALWriter ..> WALEntry
+
+FlushPipeline ..> FlushSlot
+FlushPipeline ..> SSTableManager
+FlushPipeline ..> WALManager
+FlushPipeline ..> CompactionManager
+
+SSTableManager *-- SSTableRegistry
+SSTableManager *-- BlockCache
+SSTableManager ..> SSTableWriter
+SSTableManager *-- SSTableReader
+SSTableWriter ..> SSTableMeta
+SSTableWriter *-- BloomFilter
+SSTableWriter *-- SparseIndex
+SSTableReader ..> BloomFilter
+SSTableReader ..> SparseIndex
+SSTableReader ..> BlockCache
+SSTableReader ..> SSTableMeta
+
+CompactionManager ..> CompactionTask
+CompactionManager ..> Worker
+Worker ..> KWayMergeIterator
+Worker ..> SSTableWriter
+Worker ..> SSTableReader
+KWayMergeIterator ..> MergeRecord
+
+SSTableManager ..> AsyncRWLock
+
+@enduml

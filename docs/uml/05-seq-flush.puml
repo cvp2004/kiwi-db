@@ -1,0 +1,56 @@
+@startuml
+title KiwiDB — Sequence: Flush pipeline (parallel write, ordered commit)
+skinparam shadowing false
+autonumber
+
+participant "MemTableManager" as MM
+participant "FlushPipeline" as FP
+participant "Slot 0" as S0
+participant "Slot 1" as S1
+participant "SSTableManager" as SM
+participant "WALManager" as WAL
+participant "CompactionManager" as CM
+
+MM -->> FP : signal (frozen snapshots queued)
+activate FP
+FP -> FP : dispatch(snapshots) — build ordered slots\nsharing one batch_abort event
+
+' ---- PHASE 1: parallel writes (semaphore-bounded) ----
+note over S0, S1 : PHASE 1 — writes run in parallel
+FP -> S0 : _flush_slot()
+activate S0
+FP -> S1 : _flush_slot()
+activate S1
+S0 -> SM : flush(snapshot0, file_id0)
+activate SM
+SM --> S0 : (meta0, reader0)
+deactivate SM
+S1 -> SM : flush(snapshot1, file_id1)
+activate SM
+SM --> S1 : (meta1, reader1)
+deactivate SM
+
+' ---- PHASE 2: serialized commit via event chain ----
+note over S0, S1 : PHASE 2 — commit strictly in order
+S0 -> S0 : await prev_committed (head)
+S0 -> SM : commit(file_id0, reader0)
+S0 -> MM : pop_oldest()
+S0 -> WAL : truncate_before(seq_max0)
+S0 -> CM : check_and_compact()  (async task)
+S0 -->> S1 : set my_committed  (pass the baton)
+deactivate S0
+
+S1 -> S1 : await prev_committed (slot0)
+alt batch_abort set (a predecessor failed)
+  S1 -> S1 : skip commit, close reader
+else ok
+  S1 -> SM : commit(file_id1, reader1)
+  S1 -> MM : pop_oldest()
+  S1 -> WAL : truncate_before(seq_max1)
+  S1 -> CM : check_and_compact()
+end
+S1 -->> FP : set my_committed
+deactivate S1
+deactivate FP
+
+@enduml
